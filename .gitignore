@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# AWS Amplify
+amplify_outputs.json
+.amplify/
+amplify/backend/amplify-meta.json
+amplify/backend/.temp/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# AWS credentials (if any)
+.aws/
+aws-exports.js
+
+# OS files
+Thumbs.db

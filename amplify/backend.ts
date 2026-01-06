@@ -1,0 +1,118 @@
+import { defineBackend } from '@aws-amplify/backend';
+import { auth } from './auth/resource';
+import { storage } from './storage/resource';
+import { startTrainingFunction } from './functions/start-training/resource';
+import { getTrainingStatusFunction } from './functions/get-training-status/resource';
+import { PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
+import { FunctionUrlAuthType, HttpMethod } from 'aws-cdk-lib/aws-lambda';
+
+/**
+ * バックエンド定義
+ * - 認証（Cognito）
+ * - ストレージ（S3）
+ * - Lambda関数（SageMaker操作用）
+ */
+const backend = defineBackend({
+  auth,
+  storage,
+  startTrainingFunction,
+  getTrainingStatusFunction,
+});
+
+// SageMaker操作用のIAMポリシーを追加
+const sagemakerPolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: [
+    'sagemaker:CreateTrainingJob',
+    'sagemaker:DescribeTrainingJob',
+    'sagemaker:StopTrainingJob',
+    'sagemaker:ListTrainingJobs',
+    'sagemaker:AddTags',
+    'sagemaker:DeleteTags',
+    'sagemaker:ListTags',
+  ],
+  resources: ['*'],
+});
+
+// S3アクセス用のIAMポリシー
+const s3Policy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: [
+    's3:GetObject',
+    's3:PutObject',
+    's3:DeleteObject',
+    's3:ListBucket',
+  ],
+  resources: [
+    backend.storage.resources.bucket.bucketArn,
+    `${backend.storage.resources.bucket.bucketArn}/*`,
+  ],
+});
+
+// IAM PassRole（SageMakerがS3にアクセスするため）
+const passRolePolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: ['iam:PassRole'],
+  resources: ['*'],
+  conditions: {
+    StringEquals: {
+      'iam:PassedToService': 'sagemaker.amazonaws.com',
+    },
+  },
+});
+
+// Lambda関数にポリシーを追加
+backend.startTrainingFunction.resources.lambda.addToRolePolicy(sagemakerPolicy);
+backend.startTrainingFunction.resources.lambda.addToRolePolicy(s3Policy);
+backend.startTrainingFunction.resources.lambda.addToRolePolicy(passRolePolicy);
+
+backend.getTrainingStatusFunction.resources.lambda.addToRolePolicy(sagemakerPolicy);
+
+// SageMaker IAMロールのARNを設定（作成したロールのARNに置き換えてください）
+const sagemakerRoleArn = process.env.SAGEMAKER_ROLE_ARN || 'arn:aws:iam::910478837984:role/SageMakerExecutionRole';
+
+// 環境変数を設定
+backend.startTrainingFunction.resources.lambda.addEnvironment(
+  'TRAINING_BUCKET',
+  backend.storage.resources.bucket.bucketName
+);
+backend.startTrainingFunction.resources.lambda.addEnvironment(
+  'SAGEMAKER_ROLE_ARN',
+  sagemakerRoleArn
+);
+backend.getTrainingStatusFunction.resources.lambda.addEnvironment(
+  'TRAINING_BUCKET',
+  backend.storage.resources.bucket.bucketName
+);
+
+// Lambda Function URLを追加（CORSはFunction URL側で処理）
+const startTrainingUrl = backend.startTrainingFunction.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+  cors: {
+    allowedOrigins: ['*'],
+    allowedMethods: [HttpMethod.ALL],
+    allowedHeaders: ['*'],
+  },
+});
+
+const getStatusUrl = backend.getTrainingStatusFunction.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+  cors: {
+    allowedOrigins: ['*'],
+    allowedMethods: [HttpMethod.ALL],
+    allowedHeaders: ['*'],
+  },
+});
+
+// カスタム出力を追加（amplify_outputs.jsonに含める）
+backend.addOutput({
+  custom: {
+    startTrainingUrl: startTrainingUrl.url,
+    getTrainingStatusUrl: getStatusUrl.url,
+  },
+});
+
+export default backend;
+
+
+
