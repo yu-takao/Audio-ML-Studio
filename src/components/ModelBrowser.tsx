@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { list, downloadData, getUrl } from 'aws-amplify/storage';
+import { list, getUrl } from 'aws-amplify/storage';
 import {
   Brain,
   Loader2,
@@ -16,7 +16,13 @@ import {
   AlertCircle,
   FolderOpen,
   Database,
+  Activity,
+  ImageIcon,
+  Play,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
+import outputs from '../../amplify_outputs.json';
 
 interface ModelBrowserProps {
   userId: string;
@@ -65,6 +71,27 @@ interface ModelMetadata {
   };
 }
 
+// 解析結果サマリー
+interface AnalysisSummary {
+  classes: string[];
+  samples_per_class: Record<string, number>;
+  analyzed_per_class: Record<string, number>;
+  frequency_importance: Record<string, number[]>;
+  sample_results: Array<{
+    filename: string;
+    true_class: string;
+    pred_class: string;
+    confidence: number;
+    image: string;
+  }>;
+  output_files: {
+    frequency_importance: string;
+    class_avg_spectrograms: string[];
+    class_avg_gradcams: string[];
+    sample_gradcams: string[];
+  };
+}
+
 // S3に保存されているモデル情報
 interface SavedModel {
   path: string;
@@ -72,6 +99,9 @@ interface SavedModel {
   createdAt: Date;
   metadata?: ModelMetadata;
   isLoadingMetadata?: boolean;
+  analysisStatus?: 'none' | 'loading' | 'available' | 'not_found';
+  analysisSummary?: AnalysisSummary;
+  analysisPath?: string; // analysis_summary.jsonが見つかったディレクトリ
 }
 
 export function ModelBrowser({ userId }: ModelBrowserProps) {
@@ -80,6 +110,14 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   const [error, setError] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<SavedModel | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [isStartingAnalysis, setIsStartingAnalysis] = useState(false);
+  const [analysisImages, setAnalysisImages] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
+  const [selectedAnalysisImage, setSelectedAnalysisImage] = useState<string | null>(null);
+  
+  // Lambda URL for analysis
+  const startAnalysisUrl = (outputs as { custom?: { startAnalysisUrl?: string } }).custom?.startAnalysisUrl;
 
   /**
    * S3からモデル一覧を取得
@@ -209,6 +247,129 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
     if (mode === 'random') return 'ランダム分割（legacy）';
     return mode;
   };
+
+  /**
+   * 解析結果の読み込み
+   */
+  const loadAnalysisResults = useCallback(async (model: SavedModel) => {
+    // モデルパスからanalysisディレクトリを検索
+    // models/{userId}/{jobName}/analysis/{timestamp}/analysis_summary.json
+    const baseAnalysisPath = model.path.replace(/\/output$/, '') + '/analysis';
+    
+    setModels(prev => prev.map(m => 
+      m.path === model.path ? { ...m, analysisStatus: 'loading' } : m
+    ));
+    
+    try {
+      // analysis ディレクトリ配下のファイルを一覧
+      const result = await list({
+        path: baseAnalysisPath + '/',
+        options: { listAll: true },
+      });
+
+      // analysis_summary.json を探す
+      const summaryFiles = result.items.filter(item => 
+        item.path.endsWith('analysis_summary.json')
+      );
+
+      if (summaryFiles.length === 0) {
+        setModels(prev => prev.map(m => 
+          m.path === model.path ? { ...m, analysisStatus: 'not_found' } : m
+        ));
+        return;
+      }
+
+      // 最新の解析結果を取得（最も新しい lastModified）
+      const latestSummary = summaryFiles.sort((a, b) => 
+        (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
+      )[0];
+
+      // analysis_summary.json のディレクトリパス
+      const analysisDir = latestSummary.path.replace('/analysis_summary.json', '');
+
+      // JSONを取得
+      const signed = await getUrl({ path: latestSummary.path, options: { expiresIn: 300 } });
+      const res = await fetch(signed.url.toString(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('Failed to fetch analysis summary');
+      const summary: AnalysisSummary = await res.json();
+
+      const updatedModel = {
+        ...model,
+        analysisStatus: 'available' as const,
+        analysisSummary: summary,
+        analysisPath: analysisDir,
+      };
+
+      setModels(prev => prev.map(m => 
+        m.path === model.path ? updatedModel : m
+      ));
+      if (selectedModel?.path === model.path) {
+        setSelectedModel(updatedModel);
+      }
+    } catch (err) {
+      console.error('Failed to load analysis results:', err);
+      setModels(prev => prev.map(m => 
+        m.path === model.path ? { ...m, analysisStatus: 'not_found' } : m
+      ));
+    }
+  }, [selectedModel]);
+
+  /**
+   * 解析を開始
+   */
+  const startAnalysis = useCallback(async (model: SavedModel) => {
+    if (!startAnalysisUrl) {
+      setError('解析機能が設定されていません（startAnalysisUrl が見つかりません）');
+      return;
+    }
+
+    setIsStartingAnalysis(true);
+    try {
+      const response = await fetch(startAnalysisUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          modelJobName: model.name,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to start analysis');
+      }
+
+      const result = await response.json();
+      console.log('Analysis started:', result);
+      alert(`解析を開始しました。\nジョブ名: ${result.processingJobName}\n\n処理完了まで数分〜数十分かかります。完了後、このページを更新してください。`);
+    } catch (err) {
+      console.error('Failed to start analysis:', err);
+      setError(`解析の開始に失敗しました: ${(err as Error).message}`);
+    } finally {
+      setIsStartingAnalysis(false);
+    }
+  }, [startAnalysisUrl, userId]);
+
+  /**
+   * 解析画像を読み込み
+   */
+  const loadAnalysisImage = useCallback(async (imagePath: string) => {
+    if (analysisImages[imagePath] || loadingImages.has(imagePath)) return;
+
+    setLoadingImages(prev => new Set(prev).add(imagePath));
+    try {
+      const signed = await getUrl({ path: imagePath, options: { expiresIn: 300 } });
+      setAnalysisImages(prev => ({ ...prev, [imagePath]: signed.url.toString() }));
+    } catch (err) {
+      console.error('Failed to load analysis image:', err);
+    } finally {
+      setLoadingImages(prev => {
+        const next = new Set(prev);
+        next.delete(imagePath);
+        return next;
+      });
+    }
+  }, [analysisImages, loadingImages]);
 
   return (
     <div className="space-y-6">
@@ -532,6 +693,253 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                     </div>
                   )}
                 </div>
+
+                {/* モデル解析（Grad-CAM） */}
+                <div>
+                  <button
+                    onClick={() => {
+                      setShowAnalysis(!showAnalysis);
+                      if (!showAnalysis && !selectedModel.analysisSummary && selectedModel.analysisStatus !== 'loading') {
+                        loadAnalysisResults(selectedModel);
+                      }
+                    }}
+                    className="flex items-center justify-between w-full p-3 rounded-lg bg-zinc-800/50 
+                             hover:bg-zinc-800 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                      <Activity className="w-4 h-4" />
+                      モデル解析（判定根拠の可視化）
+                    </span>
+                    {showAnalysis ? (
+                      <ChevronUp className="w-4 h-4 text-zinc-400" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-zinc-400" />
+                    )}
+                  </button>
+
+                  {showAnalysis && (
+                    <div className="mt-4 space-y-4">
+                      {/* 解析ステータス */}
+                      {selectedModel.analysisStatus === 'loading' && (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 text-violet-400 animate-spin" />
+                          <span className="ml-2 text-zinc-400">解析結果を読み込み中...</span>
+                        </div>
+                      )}
+
+                      {selectedModel.analysisStatus === 'not_found' && (
+                        <div className="p-4 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                          <div className="flex items-center gap-3 mb-4">
+                            <ImageIcon className="w-8 h-8 text-zinc-500" />
+                            <div>
+                              <p className="text-white font-medium">解析結果がありません</p>
+                              <p className="text-sm text-zinc-500">
+                                Grad-CAMやクラス別平均スペクトログラムを生成するには解析を実行してください
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => startAnalysis(selectedModel)}
+                            disabled={isStartingAnalysis || !startAnalysisUrl}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg 
+                                     bg-violet-600 hover:bg-violet-500 text-white font-medium
+                                     disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {isStartingAnalysis ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                解析を開始中...
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-4 h-4" />
+                                解析を開始
+                              </>
+                            )}
+                          </button>
+                          {!startAnalysisUrl && (
+                            <p className="text-xs text-amber-400 mt-2">
+                              ※ 解析機能を使用するにはバックエンドのデプロイが必要です
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {selectedModel.analysisStatus === 'available' && selectedModel.analysisSummary && (
+                        <div className="space-y-4">
+                          {/* 周波数帯別寄与度グラフ */}
+                          <div className="p-4 rounded-lg bg-zinc-900/50">
+                            <h6 className="text-xs font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                              <BarChart3 className="w-4 h-4" />
+                              周波数帯別の寄与度
+                            </h6>
+                            {selectedModel.analysisPath && (
+                              <div className="mb-3">
+                                {(() => {
+                                  const imgPath = `${selectedModel.analysisPath}/${selectedModel.analysisSummary?.output_files.frequency_importance}`;
+                                  if (!analysisImages[imgPath]) {
+                                    loadAnalysisImage(imgPath);
+                                  }
+                                  return analysisImages[imgPath] ? (
+                                    <img 
+                                      src={analysisImages[imgPath]} 
+                                      alt="Frequency Importance"
+                                      className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                                      onClick={() => setSelectedAnalysisImage(analysisImages[imgPath])}
+                                    />
+                                  ) : (
+                                    <div className="h-32 flex items-center justify-center bg-zinc-800 rounded-lg">
+                                      <Loader2 className="w-6 h-6 text-zinc-500 animate-spin" />
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            )}
+                            <p className="text-xs text-zinc-500">
+                              各クラスがどの周波数帯を重視して判定しているかを示します
+                            </p>
+                          </div>
+
+                          {/* クラス別平均Grad-CAM */}
+                          <div className="p-4 rounded-lg bg-zinc-900/50">
+                            <h6 className="text-xs font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                              <Target className="w-4 h-4" />
+                              クラス別平均Grad-CAM
+                            </h6>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {selectedModel.analysisSummary.output_files.class_avg_gradcams.map((imgFile) => {
+                                const imgPath = `${selectedModel.analysisPath}/${imgFile}`;
+                                const className = imgFile.replace('class_', '').replace('_avg_gradcam.png', '');
+                                if (!analysisImages[imgPath]) {
+                                  loadAnalysisImage(imgPath);
+                                }
+                                return (
+                                  <div key={imgFile} className="space-y-1">
+                                    <div 
+                                      className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
+                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                    >
+                                      {analysisImages[imgPath] ? (
+                                        <img src={analysisImages[imgPath]} alt={className} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center">
+                                          <Loader2 className="w-4 h-4 text-zinc-600 animate-spin" />
+                                        </div>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-zinc-500 text-center truncate">{className}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-xs text-zinc-500 mt-3">
+                              赤い領域ほど判定に強く寄与しています
+                            </p>
+                          </div>
+
+                          {/* クラス別平均スペクトログラム */}
+                          <div className="p-4 rounded-lg bg-zinc-900/50">
+                            <h6 className="text-xs font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                              <Layers className="w-4 h-4" />
+                              クラス別平均スペクトログラム
+                            </h6>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {selectedModel.analysisSummary.output_files.class_avg_spectrograms.map((imgFile) => {
+                                const imgPath = `${selectedModel.analysisPath}/${imgFile}`;
+                                const className = imgFile.replace('class_', '').replace('_avg_spectrogram.png', '');
+                                if (!analysisImages[imgPath]) {
+                                  loadAnalysisImage(imgPath);
+                                }
+                                return (
+                                  <div key={imgFile} className="space-y-1">
+                                    <div 
+                                      className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
+                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                    >
+                                      {analysisImages[imgPath] ? (
+                                        <img src={analysisImages[imgPath]} alt={className} className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center">
+                                          <Loader2 className="w-4 h-4 text-zinc-600 animate-spin" />
+                                        </div>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-zinc-500 text-center truncate">{className}</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <p className="text-xs text-zinc-500 mt-3">
+                              各クラスの音の平均的な特徴を示しています
+                            </p>
+                          </div>
+
+                          {/* サンプルGrad-CAM */}
+                          {selectedModel.analysisSummary.sample_results.length > 0 && (
+                            <div className="p-4 rounded-lg bg-zinc-900/50">
+                              <h6 className="text-xs font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                                <ImageIcon className="w-4 h-4" />
+                                サンプル別Grad-CAM
+                              </h6>
+                              <div className="space-y-2 max-h-64 overflow-y-auto">
+                                {selectedModel.analysisSummary.sample_results.map((sample, idx) => {
+                                  const imgPath = `${selectedModel.analysisPath}/${sample.image}`;
+                                  const isCorrect = sample.true_class === sample.pred_class;
+                                  if (!analysisImages[imgPath]) {
+                                    loadAnalysisImage(imgPath);
+                                  }
+                                  return (
+                                    <div 
+                                      key={idx} 
+                                      className="flex items-center gap-3 p-2 rounded bg-zinc-800/50 hover:bg-zinc-800 cursor-pointer transition-colors"
+                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                    >
+                                      <div className="w-16 h-10 bg-zinc-700 rounded overflow-hidden flex-shrink-0">
+                                        {analysisImages[imgPath] ? (
+                                          <img src={analysisImages[imgPath]} alt={sample.filename} className="w-full h-full object-cover" />
+                                        ) : (
+                                          <div className="w-full h-full flex items-center justify-center">
+                                            <Loader2 className="w-3 h-3 text-zinc-600 animate-spin" />
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs text-white truncate">{sample.filename}</p>
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <span className="text-zinc-500">予測: {sample.pred_class}</span>
+                                          <span className={isCorrect ? 'text-emerald-400' : 'text-red-400'}>
+                                            ({(sample.confidence * 100).toFixed(1)}%)
+                                          </span>
+                                        </div>
+                                      </div>
+                                      {isCorrect ? (
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                      ) : (
+                                        <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 解析結果がまだ取得されていない場合のボタン */}
+                      {!selectedModel.analysisStatus && (
+                        <button
+                          onClick={() => loadAnalysisResults(selectedModel)}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg 
+                                   bg-zinc-700 hover:bg-zinc-600 text-white transition-colors"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          解析結果を確認
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="text-center py-12">
@@ -539,6 +947,29 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                 <p className="text-zinc-400">メタデータを読み込めませんでした</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 画像拡大モーダル */}
+      {selectedAnalysisImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setSelectedAnalysisImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full">
+            <img 
+              src={selectedAnalysisImage} 
+              alt="Analysis" 
+              className="w-full h-auto max-h-[90vh] object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={() => setSelectedAnalysisImage(null)}
+              className="absolute top-2 right-2 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+            >
+              <XCircle className="w-6 h-6" />
+            </button>
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import { auth } from './auth/resource';
 import { storage } from './storage/resource';
 import { startTrainingFunction } from './functions/start-training/resource';
 import { getTrainingStatusFunction } from './functions/get-training-status/resource';
+import { startAnalysisFunction } from './functions/start-analysis/resource';
 import { PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType, HttpMethod } from 'aws-cdk-lib/aws-lambda';
 
@@ -17,6 +18,7 @@ const backend = defineBackend({
   storage,
   startTrainingFunction,
   getTrainingStatusFunction,
+  startAnalysisFunction,
 });
 
 // SageMaker操作用のIAMポリシーを追加
@@ -27,6 +29,10 @@ const sagemakerPolicy = new PolicyStatement({
     'sagemaker:DescribeTrainingJob',
     'sagemaker:StopTrainingJob',
     'sagemaker:ListTrainingJobs',
+    'sagemaker:CreateProcessingJob',
+    'sagemaker:DescribeProcessingJob',
+    'sagemaker:StopProcessingJob',
+    'sagemaker:ListProcessingJobs',
     'sagemaker:AddTags',
     'sagemaker:DeleteTags',
     'sagemaker:ListTags',
@@ -85,6 +91,19 @@ backend.getTrainingStatusFunction.resources.lambda.addEnvironment(
   backend.storage.resources.bucket.bucketName
 );
 
+// startAnalysis Lambda設定
+backend.startAnalysisFunction.resources.lambda.addToRolePolicy(sagemakerPolicy);
+backend.startAnalysisFunction.resources.lambda.addToRolePolicy(s3Policy);
+backend.startAnalysisFunction.resources.lambda.addToRolePolicy(passRolePolicy);
+backend.startAnalysisFunction.resources.lambda.addEnvironment(
+  'TRAINING_BUCKET',
+  backend.storage.resources.bucket.bucketName
+);
+backend.startAnalysisFunction.resources.lambda.addEnvironment(
+  'SAGEMAKER_ROLE_ARN',
+  sagemakerRoleArn
+);
+
 // Lambda Function URLを追加（CORSはFunction URL側で処理）
 const startTrainingUrl = backend.startTrainingFunction.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
@@ -104,11 +123,21 @@ const getStatusUrl = backend.getTrainingStatusFunction.resources.lambda.addFunct
   },
 });
 
+const startAnalysisUrl = backend.startAnalysisFunction.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+  cors: {
+    allowedOrigins: ['*'],
+    allowedMethods: [HttpMethod.ALL],
+    allowedHeaders: ['*'],
+  },
+});
+
 // カスタム出力を追加（amplify_outputs.jsonに含める）
 backend.addOutput({
   custom: {
     startTrainingUrl: startTrainingUrl.url,
     getTrainingStatusUrl: getStatusUrl.url,
+    startAnalysisUrl: startAnalysisUrl.url,
   },
 });
 
