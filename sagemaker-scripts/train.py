@@ -175,6 +175,31 @@ def load_dataset(data_dir: str, target_field_index: int, input_height: int, inpu
     return np.array(spectrograms), labels, filenames
 
 
+def check_presplit_data(data_dir: str):
+    """
+    データが事前分割されているかチェック
+    train/, validation/, test/ サブディレクトリがあれば事前分割とみなす
+    """
+    data_path = Path(data_dir)
+    train_dir = data_path / 'train'
+    val_dir = data_path / 'validation'
+    test_dir = data_path / 'test'
+    
+    if train_dir.exists() and val_dir.exists() and test_dir.exists():
+        train_files = list(train_dir.rglob('*.wav')) + list(train_dir.rglob('*.WAV'))
+        val_files = list(val_dir.rglob('*.wav')) + list(val_dir.rglob('*.WAV'))
+        test_files = list(test_dir.rglob('*.wav')) + list(test_dir.rglob('*.WAV'))
+        
+        if len(train_files) > 0 and len(val_files) > 0 and len(test_files) > 0:
+            logger.info("Detected pre-split data structure")
+            logger.info(f"  - Train: {len(train_files)} files")
+            logger.info(f"  - Validation: {len(val_files)} files")
+            logger.info(f"  - Test: {len(test_files)} files")
+            return True, str(train_dir), str(val_dir), str(test_dir)
+    
+    return False, None, None, None
+
+
 def build_model(input_shape: tuple, num_classes: int, learning_rate: float):
     """CNNモデルを構築"""
     logger.info(f"Building model with input shape {input_shape} and {num_classes} classes")
@@ -287,50 +312,92 @@ def main():
     logger.info(f"Parsed auxiliary_indices: {auxiliary_indices}")
     logger.info(f"Parsed class_names: {class_names}")
     
-    # データセットを読み込み
-    X, labels, filenames = load_dataset(
-        args.train, 
-        target_field_index, 
-        args.input_height, 
-        args.input_width
-    )
+    # 事前分割されたデータかチェック
+    is_presplit, train_dir, val_dir, test_dir = check_presplit_data(args.train)
     
-    if len(X) == 0:
-        raise ValueError("No valid audio files found in the training directory")
-    
-    # チャンネル次元を追加 (height, width) -> (height, width, 1)
-    X = X[..., np.newaxis]
-    
-    # ラベルをエンコード
-    label_encoder = LabelEncoder()
-    y = label_encoder.fit_transform(labels)
-    
-    # クラス情報をログ出力
-    unique_labels = label_encoder.classes_
-    logger.info(f"Classes found: {unique_labels}")
-    logger.info(f"Number of classes: {len(unique_labels)}")
-    logger.info(f"Samples per class:")
-    for cls in unique_labels:
-        count = sum(1 for l in labels if l == cls)
-        logger.info(f"  - {cls}: {count} samples")
-    
-    # データを分割
-    # まずテストデータを分離
-    test_size = args.test_split
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=42, stratify=y
-    )
-    
-    # 残りを訓練と検証に分割
-    val_size = args.validation_split / (1 - test_size)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
-    )
-    
-    logger.info(f"Dataset split:")
-    logger.info(f"  - Training: {len(X_train)} samples")
-    logger.info(f"  - Validation: {len(X_val)} samples")
-    logger.info(f"  - Test: {len(X_test)} samples")
+    if is_presplit:
+        # 事前分割されたデータを使用（データリークを防ぐ正しい方法）
+        logger.info("Using pre-split data (no data leakage)")
+        
+        X_train_raw, labels_train, _ = load_dataset(train_dir, target_field_index, args.input_height, args.input_width)
+        X_val_raw, labels_val, _ = load_dataset(val_dir, target_field_index, args.input_height, args.input_width)
+        X_test_raw, labels_test, _ = load_dataset(test_dir, target_field_index, args.input_height, args.input_width)
+        
+        if len(X_train_raw) == 0:
+            raise ValueError("No valid audio files found in the training directory")
+        
+        # チャンネル次元を追加
+        X_train = X_train_raw[..., np.newaxis]
+        X_val = X_val_raw[..., np.newaxis]
+        X_test = X_test_raw[..., np.newaxis]
+        
+        # 全ラベルを集めてエンコーダーを学習
+        all_labels = labels_train + labels_val + labels_test
+        label_encoder = LabelEncoder()
+        label_encoder.fit(all_labels)
+        
+        y_train = label_encoder.transform(labels_train)
+        y_val = label_encoder.transform(labels_val)
+        y_test = label_encoder.transform(labels_test)
+        
+        unique_labels = label_encoder.classes_
+        logger.info(f"Classes found: {unique_labels}")
+        logger.info(f"Number of classes: {len(unique_labels)}")
+        logger.info(f"Pre-split dataset:")
+        logger.info(f"  - Training: {len(X_train)} samples (augmented)")
+        logger.info(f"  - Validation: {len(X_val)} samples (original)")
+        logger.info(f"  - Test: {len(X_test)} samples (original)")
+        split_mode = "presplit"
+        
+    else:
+        # 従来通りランダム分割（後方互換性のため）
+        logger.info("Using random split (legacy mode)")
+        
+        # データセットを読み込み
+        X, labels, filenames = load_dataset(
+            args.train, 
+            target_field_index, 
+            args.input_height, 
+            args.input_width
+        )
+        
+        if len(X) == 0:
+            raise ValueError("No valid audio files found in the training directory")
+        
+        # チャンネル次元を追加 (height, width) -> (height, width, 1)
+        X = X[..., np.newaxis]
+        
+        # ラベルをエンコード
+        label_encoder = LabelEncoder()
+        y = label_encoder.fit_transform(labels)
+        
+        # クラス情報をログ出力
+        unique_labels = label_encoder.classes_
+        logger.info(f"Classes found: {unique_labels}")
+        logger.info(f"Number of classes: {len(unique_labels)}")
+        logger.info(f"Samples per class:")
+        for cls in unique_labels:
+            count = sum(1 for l in labels if l == cls)
+            logger.info(f"  - {cls}: {count} samples")
+        
+        # データを分割
+        # まずテストデータを分離
+        test_size = args.test_split
+        X_temp, X_test, y_temp, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=42, stratify=y
+        )
+        
+        # 残りを訓練と検証に分割
+        val_size = args.validation_split / (1 - test_size)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
+        )
+        
+        logger.info(f"Dataset split:")
+        logger.info(f"  - Training: {len(X_train)} samples")
+        logger.info(f"  - Validation: {len(X_val)} samples")
+        logger.info(f"  - Test: {len(X_test)} samples")
+        split_mode = "random"
     
     # モデルを構築
     input_shape = (args.input_height, args.input_width, 1)
@@ -391,11 +458,33 @@ def main():
     job_name = args.job_name or os.environ.get('JOB_NAME')
 
     # メタデータを保存
+    def build_split_class_distribution(y_encoded: np.ndarray, encoder: LabelEncoder):
+        dist = {}
+        if y_encoded is None:
+            return dist
+        classes = encoder.classes_
+        for idx, cls in enumerate(classes):
+            dist[str(cls)] = int(np.sum(y_encoded == idx))
+        return dist
+
     metadata = {
         'classes': unique_labels.tolist(),
         'input_shape': list(input_shape),
         'target_field': args.target_field,
         'auxiliary_fields': auxiliary_indices,
+        'dataset': {
+            'split_mode': split_mode,
+            'counts': {
+                'train': int(len(X_train)),
+                'validation': int(len(X_val)),
+                'test': int(len(X_test)),
+            },
+            'class_distribution': {
+                'train': build_split_class_distribution(y_train, label_encoder),
+                'validation': build_split_class_distribution(y_val, label_encoder),
+                'test': build_split_class_distribution(y_test, label_encoder),
+            }
+        },
         'training_params': {
             'epochs': args.epochs,
             'batch_size': args.batch_size,

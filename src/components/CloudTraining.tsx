@@ -69,6 +69,21 @@ interface ModelMetadata {
   classes: string[];
   input_shape: number[];
   target_field: string;
+  // 後方互換：新しい学習スクリプトのみ付与
+  dataset?: {
+    split_mode?: 'presplit' | 'random' | string;
+    counts?: {
+      train?: number;
+      validation?: number;
+      test?: number;
+      total?: number;
+    };
+    class_distribution?: {
+      train?: Record<string, number>;
+      validation?: Record<string, number>;
+      test?: Record<string, number>;
+    };
+  };
   training_params: {
     epochs: number;
     batch_size: number;

@@ -17,6 +17,8 @@ import {
   HardDrive,
   Plus,
   Archive,
+  Sparkles,
+  Scissors,
 } from 'lucide-react';
 import { analyzeFilenames, generateClassLabel, type ParsedMetadata, type TargetFieldConfig, type AuxiliaryFieldConfig } from '../utils/metadataParser';
 import { MetadataConfig } from './MetadataConfig';
@@ -24,6 +26,9 @@ import { ParameterHelp, PARAM_HELP } from './ParameterHelp';
 import { SmartRecommendation, type DatasetStats } from './SmartRecommendation';
 import { CloudTraining } from './CloudTraining';
 import { ModelBrowser } from './ModelBrowser';
+import { DataSplitPreview } from './DataSplitPreview';
+import { TrainDataAugmenter } from './TrainDataAugmenter';
+import { stratifiedSplit, groupFilesByClass, calculateSplitStats, type SplitResult, type SplitStats } from '../utils/dataSplitter';
 
 interface TrainingConfig {
   epochs: number;
@@ -63,8 +68,8 @@ interface S3DatasetMetadata {
   datasetInfo: DatasetInfo;
 }
 
-// ステップ定義
-type Step = 'select-source' | 'configure' | 'training';
+// ステップ定義（新フロー：データ選択 → 設定 → 分割＆拡張 → 訓練）
+type Step = 'select-source' | 'configure' | 'augment' | 'training';
 
 // メインタブ定義
 type MainTab = 'new-training' | 'saved-models';
@@ -183,6 +188,14 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   // 訓練ジョブ状態
   const [isTrainingStarted, setIsTrainingStarted] = useState(false);
 
+  // データ分割状態
+  const [dataSplit, setDataSplit] = useState<SplitResult | null>(null);
+  const [splitStats, setSplitStats] = useState<SplitStats | null>(null);
+  
+  // 拡張後の訓練データ
+  const [augmentedTrainFiles, setAugmentedTrainFiles] = useState<FileInfo[] | null>(null);
+  const [isAugmentationComplete, setIsAugmentationComplete] = useState(false);
+
   /**
    * UI状態を保存
    */
@@ -211,7 +224,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         if (parsed.mainTab === 'new-training' || parsed.mainTab === 'saved-models') {
           setMainTab(parsed.mainTab);
         }
-        if (parsed.currentStep === 'select-source' || parsed.currentStep === 'configure' || parsed.currentStep === 'training') {
+        if (parsed.currentStep === 'select-source' || parsed.currentStep === 'configure' || parsed.currentStep === 'augment' || parsed.currentStep === 'training') {
           setCurrentStep(parsed.currentStep);
         }
       }
@@ -428,7 +441,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
    */
   const selectDataFolder = useCallback(async () => {
     try {
-      const handle = await window.showDirectoryPicker();
+      // クラス分布の揃え（増幅）でファイルを書き込むため readwrite を要求
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
       setDataFolder(handle);
       await scanFolderAndLoad(handle);
     } catch (err) {
@@ -438,6 +452,35 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
       setIsLoadingData(false);
     }
   }, [scanFolderAndLoad]);
+
+  /**
+   * ClassBalancer 用の filesByClass を構築（ローカルのみ）
+   */
+  const filesByClass = useMemo<Map<string, FileInfo[]> | null>(() => {
+    if (dataSource !== 'local') return null;
+    if (!metadata || !targetConfig) return null;
+    if (fileInfoList.length === 0) return null;
+
+    const map = new Map<string, FileInfo[]>();
+    for (const info of fileInfoList) {
+      const label = generateClassLabel(
+        info.file.name,
+        info.folderName,
+        targetConfig,
+        metadata.separator
+      );
+      const arr = map.get(label);
+      if (arr) arr.push(info);
+      else map.set(label, [info]);
+    }
+    return map;
+  }, [dataSource, metadata, targetConfig, fileInfoList]);
+
+  const classDistribution = useMemo<Map<string, number> | null>(() => {
+    if (dataSource !== 'local') return null;
+    if (!datasetInfo) return null;
+    return datasetInfo.samplesPerClass;
+  }, [dataSource, datasetInfo]);
 
   /**
    * ターゲット設定が変更されたらデータセット情報を更新（ローカルデータの場合のみ）
@@ -585,18 +628,76 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   // 設定が完了しているか（S3の場合もメタデータが必要）
   const isConfigComplete = hasDataSource && datasetInfo && targetConfig;
 
+  // ラベル生成関数（分割・拡張で使用）
+  const getLabelForFile = useCallback((file: FileInfo): string => {
+    if (!targetConfig || !metadata) return 'unknown';
+    return generateClassLabel(
+      file.file.name,
+      file.folderName,
+      targetConfig,
+      metadata.separator
+    );
+  }, [targetConfig, metadata]);
+
+  // データ分割を実行
+  const executeDataSplit = useCallback(() => {
+    if (fileInfoList.length === 0 || !targetConfig || !metadata) return;
+    
+    const filesByClass = groupFilesByClass(fileInfoList, getLabelForFile);
+    const split = stratifiedSplit(filesByClass, {
+      validationSplit: config.validationSplit,
+      testSplit: config.testSplit,
+      seed: 42, // 再現性のため固定シード
+    });
+    
+    setDataSplit(split);
+    setSplitStats(calculateSplitStats(split, getLabelForFile));
+    setAugmentedTrainFiles(null); // 分割が変わったら拡張結果をリセット
+    setIsAugmentationComplete(false);
+  }, [fileInfoList, targetConfig, metadata, config.validationSplit, config.testSplit, getLabelForFile]);
+
+  // 拡張完了時のハンドラ
+  const handleAugmentationComplete = useCallback((augmentedFiles: FileInfo[]) => {
+    setAugmentedTrainFiles(augmentedFiles);
+    setIsAugmentationComplete(true);
+  }, []);
+
+  // 最終的な訓練用ファイルリスト（拡張済みTrain + 元Val + 元Test）
+  const finalFileInfoList = useMemo(() => {
+    if (!dataSplit) return fileInfoList;
+    
+    const trainFiles = augmentedTrainFiles || dataSplit.train;
+    // 訓練時はTrain/Val/Testを区別するためにパスにプレフィックスを付ける
+    const withPrefix = (files: FileInfo[], prefix: string) =>
+      files.map(f => ({
+        ...f,
+        path: `${prefix}/${f.path}`,
+      }));
+    
+    return [
+      ...withPrefix(trainFiles, 'train'),
+      ...withPrefix(dataSplit.validation, 'validation'),
+      ...withPrefix(dataSplit.test, 'test'),
+    ];
+  }, [dataSplit, augmentedTrainFiles, fileInfoList]);
+
   // ステップのレンダリング
-  const renderStepIndicator = () => (
+  const renderStepIndicator = () => {
+    const steps = [
+      { id: 'select-source', label: 'データ選択', icon: Database },
+      { id: 'configure', label: '設定', icon: Settings },
+      { id: 'augment', label: '分割＆拡張', icon: Sparkles },
+      { id: 'training', label: '訓練', icon: Brain },
+    ];
+    
+    const stepOrder = steps.map(s => s.id);
+    const currentIndex = stepOrder.indexOf(currentStep);
+    
+    return (
     <div className="flex items-center justify-center gap-2 mb-8">
-      {[
-        { id: 'select-source', label: 'データ選択', icon: Database },
-        { id: 'configure', label: '設定', icon: Settings },
-        { id: 'training', label: '訓練', icon: Brain },
-      ].map((step, index) => {
+      {steps.map((step, index) => {
         const isActive = currentStep === step.id;
-        const isPast = 
-          (currentStep === 'configure' && step.id === 'select-source') ||
-          (currentStep === 'training' && (step.id === 'select-source' || step.id === 'configure'));
+        const isPast = index < currentIndex;
         const Icon = step.icon;
         
         return (
@@ -609,7 +710,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                 if (isPast) setCurrentStep(step.id as Step);
               }}
               disabled={!isPast && !isActive}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
                 isActive
                   ? 'bg-sky-500 text-white'
                   : isPast
@@ -618,13 +719,14 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
               }`}
             >
               <Icon className="w-4 h-4" />
-              <span className="text-sm font-medium">{step.label}</span>
+              <span className="text-sm font-medium hidden md:inline">{step.label}</span>
             </button>
           </div>
         );
       })}
     </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -922,6 +1024,68 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         </section>
       )}
 
+          {/* データ分割設定 */}
+          <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-amber-500/20">
+                <Scissors className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">データ分割設定</h2>
+                <p className="text-sm text-zinc-400">
+                  Train/Validation/Testに分割します。Trainデータのみ拡張対象になります。
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <label className="text-sm text-zinc-400">検証データ: {(config.validationSplit * 100).toFixed(0)}%</label>
+                  <ParameterHelp {...PARAM_HELP.validationSplit} />
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.3"
+                  step="0.05"
+                  value={config.validationSplit}
+                  onChange={(e) => setConfig({ ...config, validationSplit: parseFloat(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+              
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <label className="text-sm text-zinc-400">テストデータ: {(config.testSplit * 100).toFixed(0)}%</label>
+                  <ParameterHelp {...PARAM_HELP.testSplit} />
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.3"
+                  step="0.05"
+                  value={config.testSplit}
+                  onChange={(e) => setConfig({ ...config, testSplit: parseFloat(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 rounded-lg bg-zinc-900/50 text-sm text-zinc-400">
+              <p>
+                <span className="text-emerald-400 font-medium">Train:</span>{' '}
+                {((1 - config.validationSplit - config.testSplit) * 100).toFixed(0)}%（拡張対象）
+                {' | '}
+                <span className="text-amber-400 font-medium">Validation:</span>{' '}
+                {(config.validationSplit * 100).toFixed(0)}%（元データのみ）
+                {' | '}
+                <span className="text-sky-400 font-medium">Test:</span>{' '}
+                {(config.testSplit * 100).toFixed(0)}%（完全未知データ）
+              </p>
+            </div>
+          </section>
+
           {/* S3データセット情報 */}
           {dataSource === 's3' && selectedS3Dataset && (
             <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
@@ -944,109 +1108,6 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
             </section>
           )}
 
-          {/* 訓練設定 */}
-      <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-fuchsia-500/20">
-            <Settings className="w-5 h-5 text-fuchsia-400" />
-          </div>
-          <h2 className="text-lg font-semibold text-white">訓練設定</h2>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div>
-            <div className="flex items-center gap-1 mb-2">
-              <label className="text-sm text-zinc-400">エポック数: {config.epochs}</label>
-              <ParameterHelp {...PARAM_HELP.epochs} />
-            </div>
-            <input
-              type="range"
-              min="10"
-              max="200"
-              step="10"
-              value={config.epochs}
-              onChange={(e) => setConfig({ ...config, epochs: parseInt(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          
-          <div>
-            <div className="flex items-center gap-1 mb-2">
-              <label className="text-sm text-zinc-400">バッチサイズ: {config.batchSize}</label>
-              <ParameterHelp {...PARAM_HELP.batchSize} />
-            </div>
-            <input
-              type="range"
-              min="8"
-              max="128"
-              step="8"
-              value={config.batchSize}
-              onChange={(e) => setConfig({ ...config, batchSize: parseInt(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          
-          <div>
-            <div className="flex items-center gap-1 mb-2">
-              <label className="text-sm text-zinc-400">学習率: {config.learningRate}</label>
-              <ParameterHelp {...PARAM_HELP.learningRate} />
-            </div>
-            <input
-              type="range"
-              min="0.0001"
-              max="0.01"
-              step="0.0001"
-              value={config.learningRate}
-              onChange={(e) => setConfig({ ...config, learningRate: parseFloat(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          
-          <div>
-            <div className="flex items-center gap-1 mb-2">
-              <label className="text-sm text-zinc-400">検証データ: {(config.validationSplit * 100).toFixed(0)}%</label>
-              <ParameterHelp {...PARAM_HELP.validationSplit} />
-            </div>
-            <input
-              type="range"
-              min="0.1"
-              max="0.3"
-              step="0.05"
-              value={config.validationSplit}
-              onChange={(e) => setConfig({ ...config, validationSplit: parseFloat(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-          
-          <div>
-            <div className="flex items-center gap-1 mb-2">
-              <label className="text-sm text-zinc-400">テストデータ: {(config.testSplit * 100).toFixed(0)}%</label>
-              <ParameterHelp {...PARAM_HELP.testSplit} />
-            </div>
-            <input
-              type="range"
-              min="0.1"
-              max="0.3"
-              step="0.05"
-              value={config.testSplit}
-              onChange={(e) => setConfig({ ...config, testSplit: parseFloat(e.target.value) })}
-              className="w-full"
-            />
-          </div>
-        </div>
-        
-        {/* スマート推奨 */}
-            {effectiveStats && (
-          <div className="mt-4">
-            <SmartRecommendation
-                  stats={effectiveStats}
-              currentParams={config}
-              onApplyRecommendation={(params) => setConfig({ ...config, ...params })}
-            />
-          </div>
-        )}
-          </section>
-
           {/* ナビゲーションボタン */}
           <div className="flex flex-col gap-3">
             {/* 設定が不完全な場合の警告 */}
@@ -1062,14 +1123,17 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
             )}
             
             <div className="flex justify-between">
-            <button
+              <button
                 onClick={() => setCurrentStep('select-source')}
                 className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
               >
                 戻る
-            </button>
-            <button
-                onClick={() => setCurrentStep('training')}
+              </button>
+              <button
+                onClick={() => {
+                  executeDataSplit();
+                  setCurrentStep('augment');
+                }}
                 disabled={!isConfigComplete}
                 className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
                   isConfigComplete
@@ -1077,27 +1141,155 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                     : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                 }`}
               >
-                次へ：訓練
+                次へ：分割＆拡張
                 <ChevronRight className="w-5 h-5" />
-            </button>
+              </button>
+            </div>
           </div>
-        </div>
         </div>
       )}
       
-      {/* Step 3: クラウド訓練 */}
+      {/* Step 3: 分割＆拡張 */}
+      {currentStep === 'augment' && (
+        <div className="space-y-6">
+          {/* 分割結果のプレビュー */}
+          {splitStats && datasetInfo && (
+            <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 rounded-lg bg-sky-500/20">
+                  <Scissors className="w-5 h-5 text-sky-400" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-white">データ分割結果</h2>
+                  <p className="text-sm text-zinc-400">
+                    元データを Train / Validation / Test に分割しました
+                  </p>
+                </div>
+              </div>
+              
+              <DataSplitPreview stats={splitStats} classes={datasetInfo.classes} />
+            </section>
+          )}
+          
+          {/* 訓練データの拡張 */}
+          {dataSplit && (
+            <TrainDataAugmenter
+              trainFiles={dataSplit.train}
+              getLabel={getLabelForFile}
+              onAugmentationComplete={handleAugmentationComplete}
+            />
+          )}
+
+          {/* 訓練設定 */}
+          <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-fuchsia-500/20">
+                <Settings className="w-5 h-5 text-fuchsia-400" />
+              </div>
+              <h2 className="text-lg font-semibold text-white">訓練パラメータ</h2>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <label className="text-sm text-zinc-400">エポック数: {config.epochs}</label>
+                  <ParameterHelp {...PARAM_HELP.epochs} />
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="200"
+                  step="10"
+                  value={config.epochs}
+                  onChange={(e) => setConfig({ ...config, epochs: parseInt(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+              
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <label className="text-sm text-zinc-400">バッチサイズ: {config.batchSize}</label>
+                  <ParameterHelp {...PARAM_HELP.batchSize} />
+                </div>
+                <input
+                  type="range"
+                  min="8"
+                  max="128"
+                  step="8"
+                  value={config.batchSize}
+                  onChange={(e) => setConfig({ ...config, batchSize: parseInt(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+              
+              <div>
+                <div className="flex items-center gap-1 mb-2">
+                  <label className="text-sm text-zinc-400">学習率: {config.learningRate}</label>
+                  <ParameterHelp {...PARAM_HELP.learningRate} />
+                </div>
+                <input
+                  type="range"
+                  min="0.0001"
+                  max="0.01"
+                  step="0.0001"
+                  value={config.learningRate}
+                  onChange={(e) => setConfig({ ...config, learningRate: parseFloat(e.target.value) })}
+                  className="w-full"
+                />
+              </div>
+            </div>
+            
+            {/* スマート推奨 */}
+            {effectiveStats && (
+              <div className="mt-4">
+                <SmartRecommendation
+                  stats={effectiveStats}
+                  currentParams={config}
+                  onApplyRecommendation={(params) => setConfig({ ...config, ...params })}
+                />
+              </div>
+            )}
+          </section>
+          
+          {/* ナビゲーションボタン */}
+          <div className="flex justify-between">
+            <button
+              onClick={() => setCurrentStep('configure')}
+              className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
+            >
+              戻る
+            </button>
+            <button
+              onClick={() => setCurrentStep('training')}
+              disabled={!isAugmentationComplete && dataSource === 'local'}
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
+                (isAugmentationComplete || dataSource === 's3')
+                  ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                  : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              }`}
+            >
+              {!isAugmentationComplete && dataSource === 'local'
+                ? '拡張を実行してください'
+                : '次へ：訓練'}
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: クラウド訓練 */}
       {currentStep === 'training' && (
         <div className="space-y-6">
-        <CloudTraining
+          <CloudTraining
             userId={userId}
-          config={config}
-          datasetInfo={datasetInfo}
-          targetField={targetConfig?.fieldIndex?.toString() || '0'}
-          auxiliaryFields={auxiliaryFields.map(f => f.fieldIndex.toString())}
-          fileInfoList={fileInfoList}
+            config={config}
+            datasetInfo={datasetInfo}
+            targetField={targetConfig?.fieldIndex?.toString() || '0'}
+            auxiliaryFields={auxiliaryFields.map(f => f.fieldIndex.toString())}
+            fileInfoList={finalFileInfoList}
             s3DatasetPath={dataSource === 's3' ? selectedS3Dataset?.path : undefined}
-          onModelReady={(modelPath) => {
-            console.log('Cloud model ready:', modelPath);
+            onModelReady={(modelPath) => {
+              console.log('Cloud model ready:', modelPath);
               setIsTrainingStarted(false);
             }}
             onTrainingStart={() => setIsTrainingStarted(true)}
@@ -1108,7 +1300,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
           {!isTrainingStarted && (
             <div className="flex justify-start">
               <button
-                onClick={() => setCurrentStep('configure')}
+                onClick={() => setCurrentStep('augment')}
                 className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
               >
                 戻る
@@ -1116,7 +1308,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
             </div>
           )}
         </div>
-            )}
+      )}
           </>
         )}
     </div>

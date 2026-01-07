@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { list, downloadData } from 'aws-amplify/storage';
+import { list, downloadData, getUrl } from 'aws-amplify/storage';
 import {
   Brain,
   Loader2,
@@ -15,6 +15,7 @@ import {
   Clock,
   AlertCircle,
   FolderOpen,
+  Database,
 } from 'lucide-react';
 
 interface ModelBrowserProps {
@@ -26,6 +27,21 @@ interface ModelMetadata {
   classes: string[];
   input_shape: number[];
   target_field: string;
+  // 後方互換のため optional（新しい学習スクリプトのみ付与）
+  dataset?: {
+    split_mode?: 'presplit' | 'random' | string;
+    counts?: {
+      train?: number;
+      validation?: number;
+      test?: number;
+      total?: number;
+    };
+    class_distribution?: {
+      train?: Record<string, number>;
+      validation?: Record<string, number>;
+      test?: Record<string, number>;
+    };
+  };
   training_params: {
     epochs: number;
     batch_size: number;
@@ -110,13 +126,9 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
 
   /**
    * モデルのメタデータを読み込む
+   * - 署名URL + no-store で取得し、常にS3の最新を反映（キャッシュ対策）
    */
   const loadModelMetadata = useCallback(async (model: SavedModel) => {
-    // 既に読み込み済みの場合はスキップ
-    if (model.metadata) {
-      setSelectedModel(model);
-      return;
-    }
 
     // ローディング状態を設定
     setModels(prev => prev.map(m => 
@@ -124,10 +136,36 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
     ));
 
     try {
-      // model.path は models/userId/jobName/output
-      const metadataPath = `${model.path}/model_metadata.json`;
-      const result = await downloadData({ path: metadataPath }).result;
-      const text = await result.body.text();
+      // model.path は models/{userId}/{jobName}/output
+      // 古い環境や手動差し替えでパスがズレる場合があるため候補を順に試す
+      const candidates = [
+        `${model.path}/model_metadata.json`,
+        // 念のため: output直下ではなく job 直下に置かれているケース
+        model.path.endsWith('/output') ? `${model.path.replace(/\/output$/, '')}/model_metadata.json` : '',
+        // 念のため: public/ 配下に置かれている旧形式
+        `public/${model.path}/model_metadata.json`,
+      ].filter(Boolean);
+
+      let lastErr: unknown = null;
+      let text: string | null = null;
+      let usedPath: string | null = null;
+
+      for (const metadataPath of candidates) {
+        try {
+          // ブラウザキャッシュを確実に回避するため、署名付きURLを都度発行して no-store で取得
+          const signed = await getUrl({ path: metadataPath, options: { expiresIn: 60 } });
+          const res = await fetch(signed.url.toString(), { cache: 'no-store' });
+          if (!res.ok) throw new Error(`Failed to fetch metadata (${res.status})`);
+          text = await res.text();
+          usedPath = metadataPath;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!text) throw lastErr || new Error('Failed to load model metadata');
+
       const metadata: ModelMetadata = JSON.parse(text);
 
       const updatedModel = { ...model, metadata, isLoadingMetadata: false };
@@ -163,6 +201,13 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   // 精度をパーセントで表示
   const formatAccuracy = (value: number) => {
     return `${(value * 100).toFixed(1)}%`;
+  };
+
+  const formatSplitMode = (mode?: string) => {
+    if (!mode) return '未記録';
+    if (mode === 'presplit') return '事前分割（train/validation/test）';
+    if (mode === 'random') return 'ランダム分割（legacy）';
+    return mode;
   };
 
   return (
@@ -365,6 +410,65 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                       <span className="text-zinc-500">検証割合</span>
                       <span className="text-white">{(selectedModel.metadata.training_params.validation_split * 100).toFixed(0)}%</span>
                     </div>
+                  </div>
+                </div>
+
+                {/* データ内訳（後方互換：無い場合は未記録） */}
+                <div>
+                  <h5 className="text-sm font-medium text-zinc-400 mb-3 flex items-center gap-2">
+                    <Database className="w-4 h-4" />
+                    データ数の内訳
+                  </h5>
+
+                  <div className="space-y-2">
+                    {(() => {
+                      const ds = selectedModel.metadata?.dataset;
+                      const counts = ds?.counts;
+                      const hasCounts = !!counts && Object.keys(counts).length > 0;
+                      return (
+                        <>
+                    <div className="flex justify-between p-2 rounded bg-zinc-800/50 text-sm">
+                      <span className="text-zinc-500">分割方式</span>
+                      <span className="text-white">{formatSplitMode(selectedModel.metadata.dataset?.split_mode)}</span>
+                    </div>
+
+                    {hasCounts ? (
+                      <div className="grid grid-cols-4 gap-2 text-sm">
+                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                          <div className="text-xs text-zinc-500">train</div>
+                          <div className="text-lg font-bold text-white">
+                            {selectedModel.metadata.dataset.counts.train ?? '—'}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                          <div className="text-xs text-zinc-500">validation</div>
+                          <div className="text-lg font-bold text-white">
+                            {selectedModel.metadata.dataset.counts.validation ?? '—'}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                          <div className="text-xs text-zinc-500">test</div>
+                          <div className="text-lg font-bold text-white">
+                            {selectedModel.metadata.dataset.counts.test ?? '—'}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                          <div className="text-xs text-zinc-500">total</div>
+                          <div className="text-lg font-bold text-white">
+                            {selectedModel.metadata.dataset.counts.total ?? '—'}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="text-sm text-zinc-500">
+                          このモデルは旧形式のため、データ内訳がメタデータに保存されていません。
+                        </div>
+                      </div>
+                    )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
