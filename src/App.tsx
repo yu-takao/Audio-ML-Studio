@@ -5,14 +5,16 @@ import { Sidebar } from './components/Sidebar';
 import { DataAugmentation } from './components/DataAugmentation';
 import { ModelTraining } from './components/ModelTraining';
 import { DataOrganizer } from './components/DataOrganizer';
+import { ModelEvaluation } from './components/ModelEvaluation';
 import {
   Sparkles,
   Brain,
   AlertCircle,
   FolderCog,
+  Target,
 } from 'lucide-react';
 
-type TabId = 'training' | 'augmentation' | 'organizer';
+type TabId = 'training' | 'evaluation' | 'augmentation' | 'organizer';
 
 // Authenticatorのカスタムコンポーネント
 const authComponents = {
@@ -82,6 +84,11 @@ function AppContent({ user, signOut }: { user: { userId: string; username?: stri
       icon: <Brain className="w-5 h-5" />,
     },
     {
+      id: 'evaluation',
+      label: 'モデル評価',
+      icon: <Target className="w-5 h-5" />,
+    },
+    {
       id: 'augmentation',
       label: 'データ拡張',
       icon: <Sparkles className="w-5 h-5" />,
@@ -97,6 +104,8 @@ function AppContent({ user, signOut }: { user: { userId: string; username?: stri
     switch (activeTab) {
       case 'training':
         return { title: 'モデル構築', description: '2D-CNNモデルを構築・訓練します' };
+      case 'evaluation':
+        return { title: 'モデル評価', description: '訓練済みモデルを新しいデータで評価します' };
       case 'augmentation':
         return { title: 'データ拡張', description: '音声データの拡張を行います' };
       case 'organizer':
@@ -130,6 +139,7 @@ function AppContent({ user, signOut }: { user: { userId: string; username?: stri
 
           {/* タブコンテンツ */}
           {activeTab === 'training' && <ModelTraining userId={user.userId} />}
+          {activeTab === 'evaluation' && <ModelEvaluation userId={user.userId} />}
           {activeTab === 'augmentation' && <DataAugmentation />}
           {activeTab === 'organizer' && <DataOrganizer />}
         </div>

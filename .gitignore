@@ -40,3 +40,7 @@ aws-exports.js
 
 # OS files
 Thumbs.db
+
+# Temporary files
+temp_*.json
+analyze.py

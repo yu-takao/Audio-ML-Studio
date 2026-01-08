@@ -1,269 +1,623 @@
-import { useMemo } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { list, uploadData, downloadData } from 'aws-amplify/storage';
+import { useFileSystem } from '../hooks/useFileSystem';
+import { MetadataConfig } from './MetadataConfig';
+import { InferenceResults } from './InferenceResults';
 import {
-  BarChart3,
-  Target,
+  analyzeFilenames,
+  generateClassLabel,
+  type ParsedMetadata,
+  type TargetFieldConfig,
+  type AuxiliaryFieldConfig,
+} from '../utils/metadataParser';
+import {
+  FolderOpen,
+  Brain,
+  Loader2,
   CheckCircle2,
-  TrendingUp,
+  AlertCircle,
+  Upload,
+  Play,
+  RefreshCw,
+  Calendar,
+  Database,
+  Target,
+  ChevronRight,
+  FileText,
+  Download,
 } from 'lucide-react';
-
-interface EvaluationResult {
-  accuracy: number;
-  loss: number;
-  confusionMatrix: number[][];
-  classNames: string[];
-  perClassMetrics: {
-    className: string;
-    precision: number;
-    recall: number;
-    f1Score: number;
-    support: number;
-  }[];
-  predictions: number[];
-  actuals: number[];
-}
+import outputs from '../../amplify_outputs.json';
 
 interface ModelEvaluationProps {
-  result: EvaluationResult;
+  userId: string;
 }
 
-export function ModelEvaluation({ result }: ModelEvaluationProps) {
-  const { accuracy, confusionMatrix, classNames, perClassMetrics } = result;
+// 保存されているモデル情報
+interface SavedModel {
+  path: string;
+  name: string;
+  createdAt: Date;
+  classes?: string[];
+  targetField?: string;
+  auxiliaryFields?: string[];
+}
 
-  // 平均メトリクスを計算
-  const avgMetrics = useMemo(() => {
-    const totalSupport = perClassMetrics.reduce((sum, m) => sum + m.support, 0);
-    const weightedPrecision = perClassMetrics.reduce(
-      (sum, m) => sum + m.precision * m.support,
-      0
-    ) / totalSupport;
-    const weightedRecall = perClassMetrics.reduce(
-      (sum, m) => sum + m.recall * m.support,
-      0
-    ) / totalSupport;
-    const weightedF1 = perClassMetrics.reduce(
-      (sum, m) => sum + m.f1Score * m.support,
-      0
-    ) / totalSupport;
+// 評価ジョブのステータス
+type JobStatus = 'InProgress' | 'Completed' | 'Failed' | 'Stopping' | 'Stopped';
 
-    return {
-      precision: weightedPrecision,
-      recall: weightedRecall,
-      f1Score: weightedF1,
-    };
-  }, [perClassMetrics]);
+// ステップ定義
+type Step = 'select-model' | 'select-data' | 'configure-metadata' | 'running' | 'results';
 
-  // 混同行列の最大値を取得（色の正規化用）
-  const maxConfusionValue = useMemo(() => {
-    let max = 0;
-    confusionMatrix.forEach((row) => {
-      row.forEach((val) => {
-        if (val > max) max = val;
+interface EvaluationMetrics {
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1_score: number;
+  confusion_matrix: number[][];
+  class_metrics: Array<{
+    class_name: string;
+    precision: number;
+    recall: number;
+    f1_score: number;
+    support: number;
+  }>;
+}
+
+interface FilePrediction {
+  filename: string;
+  true_label: string;
+  predicted_label: string;
+  confidence: string;
+  correct: boolean;
+}
+
+export function ModelEvaluation({ userId }: ModelEvaluationProps) {
+  const [currentStep, setCurrentStep] = useState<Step>('select-model');
+  
+  // モデル選択
+  const [savedModels, setSavedModels] = useState<SavedModel[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<SavedModel | null>(null);
+
+  // データ選択（ファイルシステム）
+  const {
+    inputFolder,
+    wavFiles,
+    isLoading: isLoadingFiles,
+    error: fileError,
+    selectInputFolder,
+  } = useFileSystem();
+
+  // メタデータ設定
+  const [metadata, setMetadata] = useState<ParsedMetadata | null>(null);
+  const [targetConfig, setTargetConfig] = useState<TargetFieldConfig | null>(null);
+  const [auxiliaryFields, setAuxiliaryFields] = useState<AuxiliaryFieldConfig[]>([]);
+
+  // 評価ジョブ
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [jobName, setJobName] = useState('');
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // 評価結果
+  const [evaluationMetrics, setEvaluationMetrics] = useState<EvaluationMetrics | null>(null);
+  const [filePredictions, setFilePredictions] = useState<FilePrediction[]>([]);
+
+  // Lambda関数のURL
+  const startEvaluationUrl = outputs.custom?.startEvaluationUrl;
+  const getEvaluationStatusUrl = outputs.custom?.getEvaluationStatusUrl;
+
+  // 保存済みモデルのリストを取得
+  const loadSavedModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    try {
+      const result = await list({
+        path: `models/`,
       });
-    });
-    return max || 1;
-  }, [confusionMatrix]);
+
+      const modelFolders = new Map<string, { path: string; lastModified: Date }>();
+
+      for (const item of result.items) {
+        if (item.path.endsWith('model.json')) {
+          const folderMatch = item.path.match(/models\/([^/]+)\//);
+          if (folderMatch) {
+            const folderName = folderMatch[1];
+            const existing = modelFolders.get(folderName);
+            if (!existing || item.lastModified! > existing.lastModified) {
+              modelFolders.set(folderName, {
+                path: item.path.replace('/model.json', ''),
+                lastModified: item.lastModified!,
+              });
+            }
+          }
+        }
+      }
+
+      const models: SavedModel[] = [];
+      for (const [name, info] of modelFolders) {
+        // メタデータを読み込む
+        try {
+          const metadataPath = `${info.path}/metadata.json`;
+          const metadataResult = await downloadData({ path: metadataPath }).result;
+          const metadataText = await metadataResult.body.text();
+          const metadata = JSON.parse(metadataText);
+
+          models.push({
+            path: info.path,
+            name,
+            createdAt: info.lastModified,
+            classes: metadata.classes || [],
+            targetField: metadata.target_field,
+            auxiliaryFields: metadata.auxiliary_fields || [],
+          });
+        } catch {
+          // メタデータがない場合
+          models.push({
+            path: info.path,
+            name,
+            createdAt: info.lastModified,
+          });
+        }
+      }
+
+      models.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      setSavedModels(models);
+    } catch (err) {
+      console.error('Error loading models:', err);
+      setError('モデルの読み込みに失敗しました');
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSavedModels();
+  }, [loadSavedModels]);
+
+  // データ選択時にメタデータを解析
+  useEffect(() => {
+    if (wavFiles.length > 0) {
+      const filenames = wavFiles.map(f => f.name);
+      const analyzed = analyzeFilenames(filenames, undefined, '_');
+      setMetadata(analyzed);
+    }
+  }, [wavFiles]);
+
+  // モデルを選択
+  const handleSelectModel = (model: SavedModel) => {
+    setSelectedModel(model);
+    setCurrentStep('select-data');
+  };
+
+  // データフォルダを選択
+  const handleSelectData = async () => {
+    await selectInputFolder();
+    if (wavFiles.length > 0) {
+      setCurrentStep('configure-metadata');
+    }
+  };
+
+  // 評価を開始
+  const handleStartEvaluation = async () => {
+    if (!selectedModel || !targetConfig || wavFiles.length === 0) {
+      setError('モデル、データ、メタデータ設定が必要です');
+      return;
+    }
+
+    setCurrentStep('running');
+    setError(null);
+    setIsUploading(true);
+
+    try {
+      // 1. データをS3にアップロード
+      const timestamp = Date.now();
+      const dataPath = `evaluation/temp/${userId}/eval-${timestamp}`;
+
+      let uploadedCount = 0;
+      for (const file of wavFiles) {
+        const filePath = `${dataPath}/${file.name}`;
+        await uploadData({
+          path: filePath,
+          data: file,
+        }).result;
+
+        uploadedCount++;
+        setUploadProgress(Math.floor((uploadedCount / wavFiles.length) * 100));
+      }
+
+      setIsUploading(false);
+
+      // 2. クラス名を生成
+      const classNames = new Set<string>();
+      for (const file of wavFiles) {
+        const parsed = analyzeFilenames([file.name], undefined, '_');
+        const fileMetadata = Object.fromEntries(
+          parsed.fields.map((f, i) => [String(i), f.uniqueValues[0] || ''])
+        );
+        const label = generateClassLabel(fileMetadata, targetConfig, auxiliaryFields);
+        classNames.add(label);
+      }
+
+      // 3. SageMaker評価ジョブを開始
+      const response = await fetch(startEvaluationUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          config: {
+            dataPath,
+            modelPath: selectedModel.path,
+            targetField: targetConfig.fieldIndex,
+            auxiliaryFields: auxiliaryFields.map(f => f.fieldIndex),
+            classNames: Array.from(classNames).sort(),
+            inputHeight: 128,
+            inputWidth: 128,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('評価ジョブの開始に失敗しました');
+      }
+
+      const result = await response.json();
+      setJobName(result.processingJobName);
+      setJobStatus('InProgress');
+
+      // ポーリング開始
+      pollJobStatus(result.processingJobName);
+    } catch (err) {
+      console.error('Error starting evaluation:', err);
+      setError((err as Error).message || '評価の開始に失敗しました');
+      setCurrentStep('configure-metadata');
+      setIsUploading(false);
+    }
+  };
+
+  // ジョブステータスをポーリング
+  const pollJobStatus = useCallback(
+    async (processingJobName: string) => {
+      const poll = async () => {
+        try {
+          const response = await fetch(getEvaluationStatusUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ processingJobName }),
+          });
+
+          if (!response.ok) {
+            throw new Error('ステータス取得に失敗しました');
+          }
+
+          const status = await response.json();
+          setJobStatus(status.status);
+
+          if (status.status === 'Completed') {
+            // 結果を読み込む
+            await loadEvaluationResults(status.outputPath);
+            setCurrentStep('results');
+            return;
+          } else if (status.status === 'Failed') {
+            setError(`評価ジョブが失敗しました: ${status.failureReason || '不明なエラー'}`);
+            setCurrentStep('configure-metadata');
+            return;
+          }
+
+          // 継続してポーリング
+          setTimeout(poll, 10000); // 10秒ごと
+        } catch (err) {
+          console.error('Error polling status:', err);
+          setError('ステータスの取得に失敗しました');
+        }
+      };
+
+      poll();
+    },
+    [getEvaluationStatusUrl]
+  );
+
+  // 評価結果を読み込む
+  const loadEvaluationResults = async (outputPath: string) => {
+    try {
+      // metrics.jsonを読み込む
+      const metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
+      const metricsFile = await downloadData({ path: `${metricsPath}/metrics.json` }).result;
+      const metricsText = await metricsFile.body.text();
+      const metrics = JSON.parse(metricsText);
+      setEvaluationMetrics(metrics);
+
+      // predictions.csvを読み込む
+      try {
+        const predictionsFile = await downloadData({ path: `${metricsPath}/predictions.csv` }).result;
+        const predictionsText = await predictionsFile.body.text();
+        const lines = predictionsText.split('\n').filter(l => l.trim());
+        
+        // CSVパース（簡易版）
+        const predictions: FilePrediction[] = [];
+        for (let i = 1; i < lines.length; i++) {
+          const parts = lines[i].split(',');
+          if (parts.length >= 5) {
+            predictions.push({
+              filename: parts[0],
+              true_label: parts[1],
+              predicted_label: parts[2],
+              confidence: parts[3],
+              correct: parts[4] === 'True' || parts[4] === 'true',
+            });
+          }
+        }
+        setFilePredictions(predictions);
+      } catch (err) {
+        console.warn('predictions.csv not found or error:', err);
+      }
+    } catch (err) {
+      console.error('Error loading results:', err);
+      setError('評価結果の読み込みに失敗しました');
+    }
+  };
+
+  // ステップインジケーター
+  const steps = [
+    { id: 'select-model', label: 'モデル選択', icon: <Brain className="w-4 h-4" /> },
+    { id: 'select-data', label: 'データ選択', icon: <FolderOpen className="w-4 h-4" /> },
+    { id: 'configure-metadata', label: 'メタデータ設定', icon: <Target className="w-4 h-4" /> },
+    { id: 'running', label: '評価実行中', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
+    { id: 'results', label: '結果表示', icon: <CheckCircle2 className="w-4 h-4" /> },
+  ];
+
+  const currentStepIndex = steps.findIndex(s => s.id === currentStep);
 
   return (
     <div className="space-y-6">
-      {/* 全体サマリー */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700">
-          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-            <Target className="w-4 h-4" />
-            テスト精度
-          </div>
-          <div className="text-3xl font-bold text-emerald-400">
-            {(accuracy * 100).toFixed(1)}%
-          </div>
-        </div>
-        <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700">
-          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-            <TrendingUp className="w-4 h-4" />
-            適合率 (Precision)
-          </div>
-          <div className="text-2xl font-bold text-white">
-            {(avgMetrics.precision * 100).toFixed(1)}%
-          </div>
-        </div>
-        <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700">
-          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-            <CheckCircle2 className="w-4 h-4" />
-            再現率 (Recall)
-          </div>
-          <div className="text-2xl font-bold text-white">
-            {(avgMetrics.recall * 100).toFixed(1)}%
-          </div>
-        </div>
-        <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-700">
-          <div className="flex items-center gap-2 text-sm text-zinc-500 mb-1">
-            <BarChart3 className="w-4 h-4" />
-            F1スコア
-          </div>
-          <div className="text-2xl font-bold text-violet-400">
-            {(avgMetrics.f1Score * 100).toFixed(1)}%
-          </div>
+      {/* ステップインジケーター */}
+      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+        <div className="flex items-center justify-between">
+          {steps.map((step, idx) => (
+            <div key={step.id} className="flex items-center">
+              <div
+                className={`flex items-center gap-2 ${
+                  idx <= currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
+                }`}
+              >
+                {step.icon}
+                <span className="text-sm font-medium hidden sm:inline">{step.label}</span>
+              </div>
+              {idx < steps.length - 1 && (
+                <ChevronRight
+                  className={`w-5 h-5 mx-2 ${
+                    idx < currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
+                  }`}
+                />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* 混同行列 */}
-      <div className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-violet-500/20">
-            <BarChart3 className="w-5 h-5 text-violet-400" />
-          </div>
+      {/* エラー表示 */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-lg font-semibold text-white">混同行列</h3>
-            <p className="text-sm text-zinc-400">行: 実際のクラス, 列: 予測クラス</p>
+            <p className="text-sm font-medium text-red-400">エラー</p>
+            <p className="text-sm text-red-300 mt-1">{error}</p>
           </div>
         </div>
+      )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr>
-                <th className="p-2 text-left text-xs text-zinc-500">実際 ＼ 予測</th>
-                {classNames.map((name) => (
-                  <th key={name} className="p-2 text-center text-xs text-zinc-400 min-w-[60px]">
-                    <div className="truncate max-w-[80px]" title={name}>
-                      {name}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {confusionMatrix.map((row, i) => (
-                <tr key={i}>
-                  <td className="p-2 text-xs text-zinc-400 font-medium">
-                    <div className="truncate max-w-[100px]" title={classNames[i]}>
-                      {classNames[i]}
-                    </div>
-                  </td>
-                  {row.map((value, j) => {
-                    const isCorrect = i === j;
-                    const intensity = value / maxConfusionValue;
-                    return (
-                      <td key={j} className="p-1">
-                        <div
-                          className={`
-                            w-full h-12 rounded flex items-center justify-center text-sm font-medium
-                            ${isCorrect
-                              ? 'bg-emerald-500'
-                              : value > 0
-                                ? 'bg-red-500'
-                                : 'bg-zinc-800'
-                            }
-                          `}
-                          style={{
-                            opacity: value > 0 ? 0.3 + intensity * 0.7 : 1,
-                          }}
-                        >
-                          <span className={value > 0 ? 'text-white' : 'text-zinc-600'}>
-                            {value}
-                          </span>
+      {/* ステップ1: モデル選択 */}
+      {currentStep === 'select-model' && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-white">評価するモデルを選択</h3>
+            <button
+              onClick={loadSavedModels}
+              disabled={isLoadingModels}
+              className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingModels ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {isLoadingModels ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
+            </div>
+          ) : savedModels.length === 0 ? (
+            <div className="text-center py-12 text-zinc-400">
+              <Brain className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>保存されているモデルがありません</p>
+              <p className="text-sm mt-1">まず「モデル構築」タブでモデルを訓練してください</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {savedModels.map((model) => (
+                <button
+                  key={model.path}
+                  onClick={() => handleSelectModel(model)}
+                  className="text-left p-4 rounded-lg border border-zinc-800 hover:border-violet-500/50 bg-zinc-800/30 hover:bg-zinc-800/50 transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <Brain className="w-5 h-5 text-violet-400 flex-shrink-0 mt-1" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-white truncate">{model.name}</h4>
+                      <div className="flex items-center gap-2 mt-2 text-xs text-zinc-400">
+                        <Calendar className="w-3 h-3" />
+                        <span>{model.createdAt.toLocaleString('ja-JP')}</span>
+                      </div>
+                      {model.classes && model.classes.length > 0 && (
+                        <div className="mt-2 text-xs text-zinc-400">
+                          <span>クラス数: {model.classes.length}</span>
                         </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* クラス別メトリクス */}
-      <div className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-cyan-500/20">
-            <Target className="w-5 h-5 text-cyan-400" />
-          </div>
-          <h3 className="text-lg font-semibold text-white">クラス別メトリクス</h3>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-zinc-700">
-                <th className="p-3 text-left text-sm text-zinc-400">クラス</th>
-                <th className="p-3 text-center text-sm text-zinc-400">適合率</th>
-                <th className="p-3 text-center text-sm text-zinc-400">再現率</th>
-                <th className="p-3 text-center text-sm text-zinc-400">F1スコア</th>
-                <th className="p-3 text-center text-sm text-zinc-400">サンプル数</th>
-              </tr>
-            </thead>
-            <tbody>
-              {perClassMetrics.map((metric, i) => (
-                <tr key={i} className="border-b border-zinc-800">
-                  <td className="p-3 text-white font-medium">
-                    <div className="truncate max-w-[150px]" title={metric.className}>
-                      {metric.className}
+                      )}
                     </div>
-                  </td>
-                  <td className="p-3 text-center">
-                    <span className={`font-medium ${metric.precision >= 0.8 ? 'text-emerald-400' : metric.precision >= 0.6 ? 'text-amber-400' : 'text-red-400'}`}>
-                      {(metric.precision * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="p-3 text-center">
-                    <span className={`font-medium ${metric.recall >= 0.8 ? 'text-emerald-400' : metric.recall >= 0.6 ? 'text-amber-400' : 'text-red-400'}`}>
-                      {(metric.recall * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="p-3 text-center">
-                    <span className={`font-medium ${metric.f1Score >= 0.8 ? 'text-emerald-400' : metric.f1Score >= 0.6 ? 'text-amber-400' : 'text-red-400'}`}>
-                      {(metric.f1Score * 100).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="p-3 text-center text-zinc-400">
-                    {metric.support}
-                  </td>
-                </tr>
+                  </div>
+                </button>
               ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-zinc-600 bg-zinc-900/30">
-                <td className="p-3 text-white font-semibold">加重平均</td>
-                <td className="p-3 text-center font-semibold text-white">
-                  {(avgMetrics.precision * 100).toFixed(1)}%
-                </td>
-                <td className="p-3 text-center font-semibold text-white">
-                  {(avgMetrics.recall * 100).toFixed(1)}%
-                </td>
-                <td className="p-3 text-center font-semibold text-violet-400">
-                  {(avgMetrics.f1Score * 100).toFixed(1)}%
-                </td>
-                <td className="p-3 text-center text-zinc-400">
-                  {perClassMetrics.reduce((sum, m) => sum + m.support, 0)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* 評価の解説 */}
-      <div className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-4">
-        <div className="text-sm text-zinc-400 space-y-2">
-          <div className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-            <span><strong className="text-white">適合率 (Precision)</strong>: 予測が正しかった割合。「このクラスと予測したうち、実際に正しかった割合」</span>
+      {/* ステップ2: データ選択 */}
+      {currentStep === 'select-data' && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-4">評価データを選択</h3>
+          
+          {selectedModel && (
+            <div className="mb-6 p-4 bg-zinc-800/30 rounded-lg border border-zinc-700">
+              <p className="text-sm text-zinc-400">選択中のモデル:</p>
+              <p className="text-white font-medium mt-1">{selectedModel.name}</p>
+            </div>
+          )}
+
+          <button
+            onClick={handleSelectData}
+            disabled={isLoadingFiles}
+            className="w-full py-4 px-6 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 font-medium"
+          >
+            {isLoadingFiles ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>読み込み中...</span>
+              </>
+            ) : (
+              <>
+                <FolderOpen className="w-5 h-5" />
+                <span>フォルダを選択</span>
+              </>
+            )}
+          </button>
+
+          {inputFolder && (
+            <div className="mt-6 p-4 bg-zinc-800/30 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-4 h-4 text-green-400" />
+                <span className="text-sm font-medium text-white">選択済み</span>
+              </div>
+              <p className="text-sm text-zinc-400">{inputFolder.name}</p>
+              <p className="text-xs text-zinc-500 mt-1">{wavFiles.length} ファイル</p>
+              
+              <button
+                onClick={() => setCurrentStep('configure-metadata')}
+                className="mt-4 w-full py-2 px-4 rounded-lg bg-violet-600 hover:bg-violet-700 font-medium flex items-center justify-center gap-2"
+              >
+                <span>次へ</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ステップ3: メタデータ設定 */}
+      {currentStep === 'configure-metadata' && metadata && (
+        <div className="space-y-6">
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">メタデータ設定</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              訓練時と同じ設定を使用してください
+            </p>
+
+            <MetadataConfig
+              metadata={metadata}
+              targetConfig={targetConfig}
+              auxiliaryFields={auxiliaryFields}
+              onTargetConfigChange={setTargetConfig}
+              onAuxiliaryFieldsChange={setAuxiliaryFields}
+            />
           </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-            <span><strong className="text-white">再現率 (Recall)</strong>: 実際のデータを正しく予測できた割合。「実際にこのクラスだったデータのうち、正しく予測できた割合」</span>
-          </div>
-          <div className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-violet-400 mt-0.5 flex-shrink-0" />
-            <span><strong className="text-white">F1スコア</strong>: 適合率と再現率の調和平均。両方のバランスを見る指標。</span>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setCurrentStep('select-data')}
+              className="flex-1 py-3 px-6 rounded-lg bg-zinc-800 hover:bg-zinc-700 font-medium"
+            >
+              戻る
+            </button>
+            <button
+              onClick={handleStartEvaluation}
+              disabled={!targetConfig}
+              className="flex-1 py-3 px-6 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
+            >
+              <Play className="w-5 h-5" />
+              <span>評価開始</span>
+            </button>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* ステップ4: 評価実行中 */}
+      {currentStep === 'running' && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-8">
+          <div className="text-center">
+            {isUploading ? (
+              <>
+                <Upload className="w-12 h-12 text-violet-400 mx-auto mb-4 animate-pulse" />
+                <h3 className="text-lg font-semibold text-white mb-2">データをアップロード中...</h3>
+                <div className="w-full max-w-md mx-auto mt-4">
+                  <div className="bg-zinc-800 rounded-full h-2">
+                    <div
+                      className="bg-violet-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-sm text-zinc-400 mt-2">{uploadProgress}%</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <Loader2 className="w-12 h-12 text-violet-400 mx-auto mb-4 animate-spin" />
+                <h3 className="text-lg font-semibold text-white mb-2">評価を実行中...</h3>
+                <p className="text-sm text-zinc-400 mb-4">
+                  ステータス: {jobStatus || '開始中'}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  予想時間: 5-15分（データ量による）
+                </p>
+                {jobName && (
+                  <p className="text-xs text-zinc-600 mt-2 font-mono">{jobName}</p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ステップ5: 結果表示 */}
+      {currentStep === 'results' && evaluationMetrics && selectedModel && (
+        <div className="space-y-6">
+          <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold text-white">評価結果</h3>
+                <p className="text-sm text-zinc-400 mt-1">
+                  モデル: {selectedModel.name}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setCurrentStep('select-model');
+                  setSelectedModel(null);
+                  setEvaluationMetrics(null);
+                  setFilePredictions([]);
+                  setError(null);
+                }}
+                className="py-2 px-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 font-medium text-sm"
+              >
+                新しい評価
+              </button>
+            </div>
+
+            <InferenceResults
+              metrics={evaluationMetrics}
+              predictions={filePredictions.length > 0 ? filePredictions : undefined}
+              classNames={selectedModel.classes || []}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-export type { EvaluationResult };
-
-
-

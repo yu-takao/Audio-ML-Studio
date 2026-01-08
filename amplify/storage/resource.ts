@@ -5,6 +5,7 @@ import { defineStorage } from '@aws-amplify/backend';
  * - training-data/: 訓練データ（音声ファイル）
  * - models/: 訓練済みモデル
  * - configs/: 訓練設定
+ * - evaluation/: 評価データ（一時データ、自動削除）
  */
 export const storage = defineStorage({
   name: 'audioMLStorage',
@@ -21,6 +22,14 @@ export const storage = defineStorage({
     ],
     // 訓練設定用パス
     'configs/{entity_id}/*': [
+      allow.entity('identity').to(['read', 'write', 'delete', 'list']),
+    ],
+    // 評価用一時データパス（24時間で自動削除）
+    'evaluation/temp/{entity_id}/*': [
+      allow.entity('identity').to(['read', 'write', 'delete', 'list']),
+    ],
+    // 評価結果パス（7日で自動削除）
+    'evaluation/results/{entity_id}/*': [
       allow.entity('identity').to(['read', 'write', 'delete', 'list']),
     ],
     // ゲストアクセス用（デモ用）
