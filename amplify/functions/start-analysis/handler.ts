@@ -16,6 +16,7 @@ const responseHeaders = {
 
 export const handler: Handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
+  console.log('[UPDATED] start-analysis handler v2 - with pip install');
 
   try {
     // リクエストボディを解析
@@ -71,13 +72,14 @@ export const handler: Handler = async (event) => {
     // Processing用コンテナ（TensorFlow）
     const processingImage = `763104351884.dkr.ecr.${region}.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker`;
 
-    // スクリプトパス
-    const scriptS3Uri = `s3://${bucket}/public/scripts/analyze.py`;
+    // スクリプトパス（ディレクトリ全体を取得してrequirements.txtも含める）
+    const scriptsS3Uri = `s3://${bucket}/public/scripts`;
 
     console.log('Starting Processing Job:', {
       processingJobName,
       modelS3Uri,
       dataS3Uri,
+      scriptsS3Uri,
       outputS3Uri,
     });
 
@@ -92,7 +94,13 @@ export const handler: Handler = async (event) => {
       },
       AppSpecification: {
         ImageUri: processingImage,
-        ContainerEntrypoint: ['python3', '/opt/ml/processing/input/code/analyze.py'],
+        // requirements.txtをインストールしてからスクリプトを実行
+        ContainerEntrypoint: [
+          'bash',
+          '-c',
+          'pip install -r /opt/ml/processing/input/code/analyze_requirements.txt && python3 /opt/ml/processing/input/code/analyze.py "$@"',
+          '--',
+        ],
         ContainerArguments: [
           '--model-path', modelS3Uri,
           '--data-path', dataS3Uri,
@@ -125,7 +133,7 @@ export const handler: Handler = async (event) => {
         {
           InputName: 'code',
           S3Input: {
-            S3Uri: scriptS3Uri,
+            S3Uri: scriptsS3Uri,
             LocalPath: '/opt/ml/processing/input/code',
             S3DataType: 'S3Prefix',
             S3InputMode: 'File',
@@ -175,4 +183,6 @@ export const handler: Handler = async (event) => {
     };
   }
 };
+
+
 

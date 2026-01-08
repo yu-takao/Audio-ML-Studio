@@ -478,6 +478,7 @@ def main():
                 'train': int(len(X_train)),
                 'validation': int(len(X_val)),
                 'test': int(len(X_test)),
+                'total': int(len(X_train) + len(X_val) + len(X_test)),
             },
             'class_distribution': {
                 'train': build_split_class_distribution(y_train, label_encoder),

@@ -325,6 +325,10 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
 
     setIsStartingAnalysis(true);
     try {
+      console.log('Starting analysis for model:', model.name);
+      console.log('Request URL:', startAnalysisUrl);
+      console.log('Request body:', { userId, modelJobName: model.name });
+
       const response = await fetch(startAnalysisUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -334,12 +338,26 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
         }),
       });
 
+      console.log('Response status:', response.status);
+      const responseText = await response.text();
+      console.log('Response body:', responseText);
+
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to start analysis');
+        let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+        try {
+          const err = JSON.parse(responseText);
+          errorMessage = err.error || err.message || errorMessage;
+          if (err.details) {
+            console.error('Error details:', err.details);
+            errorMessage += `\n詳細: ${JSON.stringify(err.details)}`;
+          }
+        } catch {
+          errorMessage = responseText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
-      const result = await response.json();
+      const result = JSON.parse(responseText);
       console.log('Analysis started:', result);
       alert(`解析を開始しました。\nジョブ名: ${result.processingJobName}\n\n処理完了まで数分〜数十分かかります。完了後、このページを更新してください。`);
     } catch (err) {
