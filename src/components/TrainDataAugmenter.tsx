@@ -179,6 +179,7 @@ export function TrainDataAugmenter({
   };
   
   // ランダム値生成
+  // @ts-expect-error - Reserved for future use
   const randomInRange = (min: number, max: number) => min + Math.random() * (max - min);
   
   /**

@@ -3,7 +3,6 @@ import {
   BarChart3,
   Target,
   CheckCircle2,
-  XCircle,
   TrendingUp,
 } from 'lucide-react';
 

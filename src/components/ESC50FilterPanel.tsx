@@ -86,6 +86,7 @@ export function ESC50FilterPanel({ filterOptions, onChange, totalCount, filtered
   };
 
   // 全クラス一覧（カテゴリごと）
+  // @ts-expect-error - Reserved for future use
   const allClasses = Object.entries(ESC50_CATEGORIES).flatMap(([key, cat]) =>
     cat.classes.map((cls) => ({ category: key as ESC50CategoryKey, className: cls }))
   );

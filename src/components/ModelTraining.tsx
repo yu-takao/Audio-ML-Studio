@@ -456,6 +456,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   /**
    * ClassBalancer 用の filesByClass を構築（ローカルのみ）
    */
+  // @ts-expect-error - Reserved for future use
   const filesByClass = useMemo<Map<string, FileInfo[]> | null>(() => {
     if (dataSource !== 'local') return null;
     if (!metadata || !targetConfig) return null;
@@ -476,6 +477,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
     return map;
   }, [dataSource, metadata, targetConfig, fileInfoList]);
 
+  // @ts-expect-error - Reserved for future use
   const classDistribution = useMemo<Map<string, number> | null>(() => {
     if (dataSource !== 'local') return null;
     if (!datasetInfo) return null;
@@ -634,9 +636,9 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
     return generateClassLabel(
       file.file.name,
       file.folderName,
-      targetConfig,
-      metadata.separator
-    );
+          targetConfig,
+          metadata.separator
+        );
   }, [targetConfig, metadata]);
 
   // データ分割を実行
@@ -1025,53 +1027,53 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
       )}
 
           {/* データ分割設定 */}
-          <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-            <div className="flex items-center gap-3 mb-4">
+      <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+        <div className="flex items-center gap-3 mb-4">
               <div className="p-2 rounded-lg bg-amber-500/20">
                 <Scissors className="w-5 h-5 text-amber-400" />
-              </div>
-              <div>
+          </div>
+          <div>
                 <h2 className="text-lg font-semibold text-white">データ分割設定</h2>
                 <p className="text-sm text-zinc-400">
                   Train/Validation/Testに分割します。Trainデータのみ拡張対象になります。
                 </p>
-              </div>
             </div>
-
+          </div>
+          
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="flex items-center gap-1 mb-2">
-                  <label className="text-sm text-zinc-400">検証データ: {(config.validationSplit * 100).toFixed(0)}%</label>
-                  <ParameterHelp {...PARAM_HELP.validationSplit} />
-                </div>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="0.3"
-                  step="0.05"
-                  value={config.validationSplit}
-                  onChange={(e) => setConfig({ ...config, validationSplit: parseFloat(e.target.value) })}
-                  className="w-full"
-                />
-              </div>
-              
-              <div>
-                <div className="flex items-center gap-1 mb-2">
-                  <label className="text-sm text-zinc-400">テストデータ: {(config.testSplit * 100).toFixed(0)}%</label>
-                  <ParameterHelp {...PARAM_HELP.testSplit} />
-                </div>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="0.3"
-                  step="0.05"
-                  value={config.testSplit}
-                  onChange={(e) => setConfig({ ...config, testSplit: parseFloat(e.target.value) })}
-                  className="w-full"
-                />
-              </div>
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <label className="text-sm text-zinc-400">検証データ: {(config.validationSplit * 100).toFixed(0)}%</label>
+              <ParameterHelp {...PARAM_HELP.validationSplit} />
             </div>
-
+            <input
+              type="range"
+              min="0.1"
+              max="0.3"
+              step="0.05"
+              value={config.validationSplit}
+              onChange={(e) => setConfig({ ...config, validationSplit: parseFloat(e.target.value) })}
+              className="w-full"
+            />
+          </div>
+          
+          <div>
+            <div className="flex items-center gap-1 mb-2">
+              <label className="text-sm text-zinc-400">テストデータ: {(config.testSplit * 100).toFixed(0)}%</label>
+              <ParameterHelp {...PARAM_HELP.testSplit} />
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="0.3"
+              step="0.05"
+              value={config.testSplit}
+              onChange={(e) => setConfig({ ...config, testSplit: parseFloat(e.target.value) })}
+              className="w-full"
+            />
+          </div>
+        </div>
+        
             <div className="mt-4 p-3 rounded-lg bg-zinc-900/50 text-sm text-zinc-400">
               <p>
                 <span className="text-emerald-400 font-medium">Train:</span>{' '}
@@ -1083,7 +1085,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                 <span className="text-sky-400 font-medium">Test:</span>{' '}
                 {(config.testSplit * 100).toFixed(0)}%（完全未知データ）
               </p>
-            </div>
+              </div>
           </section>
 
           {/* S3データセット情報 */}
@@ -1092,9 +1094,9 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
               <div className="flex items-center gap-3 mb-4">
                 <div className="p-2 rounded-lg bg-sky-500/20">
                   <Cloud className="w-5 h-5 text-sky-400" />
-                </div>
+            </div>
                 <h2 className="text-lg font-semibold text-white">選択中のデータセット</h2>
-              </div>
+            </div>
               
               <div className="bg-zinc-900/50 rounded-lg p-4">
                 <div className="font-medium text-white mb-2">{selectedS3Dataset.name}</div>
@@ -1102,9 +1104,9 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   <span>{selectedS3Dataset.fileCount} ファイル</span>
                   <span>{formatBytes(selectedS3Dataset.size)}</span>
                   <span>最終更新: {selectedS3Dataset.lastModified.toLocaleString('ja-JP')}</span>
-                </div>
+          </div>
                 <div className="mt-2 text-xs text-zinc-500 font-mono">{selectedS3Dataset.path}</div>
-              </div>
+            </div>
             </section>
           )}
 
@@ -1119,17 +1121,17 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   {!datasetInfo && <li>データセット情報が読み込まれていません</li>}
                   {!targetConfig && <li>ターゲットフィールドを選択してください</li>}
                 </ul>
-              </div>
-            )}
-            
+          </div>
+        )}
+        
             <div className="flex justify-between">
-              <button
+            <button
                 onClick={() => setCurrentStep('select-source')}
                 className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
               >
                 戻る
-              </button>
-              <button
+            </button>
+            <button
                 onClick={() => {
                   executeDataSplit();
                   setCurrentStep('augment');
@@ -1143,9 +1145,9 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
               >
                 次へ：分割＆拡張
                 <ChevronRight className="w-5 h-5" />
-              </button>
-            </div>
+            </button>
           </div>
+        </div>
         </div>
       )}
       
@@ -1154,23 +1156,23 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         <div className="space-y-6">
           {/* 分割結果のプレビュー */}
           {splitStats && datasetInfo && (
-            <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-              <div className="flex items-center gap-3 mb-4">
+        <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+          <div className="flex items-center gap-3 mb-4">
                 <div className="p-2 rounded-lg bg-sky-500/20">
                   <Scissors className="w-5 h-5 text-sky-400" />
-                </div>
+            </div>
                 <div>
                   <h2 className="text-lg font-semibold text-white">データ分割結果</h2>
                   <p className="text-sm text-zinc-400">
                     元データを Train / Validation / Test に分割しました
                   </p>
-                </div>
-              </div>
+          </div>
+            </div>
               
               <DataSplitPreview stats={splitStats} classes={datasetInfo.classes} />
-            </section>
-          )}
-          
+        </section>
+      )}
+
           {/* 訓練データの拡張 */}
           {dataSplit && (
             <TrainDataAugmenter
@@ -1181,20 +1183,20 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
           )}
 
           {/* 訓練設定 */}
-          <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
-            <div className="flex items-center gap-3 mb-4">
+        <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
+          <div className="flex items-center gap-3 mb-4">
               <div className="p-2 rounded-lg bg-fuchsia-500/20">
                 <Settings className="w-5 h-5 text-fuchsia-400" />
-              </div>
-              <h2 className="text-lg font-semibold text-white">訓練パラメータ</h2>
             </div>
-            
+              <h2 className="text-lg font-semibold text-white">訓練パラメータ</h2>
+          </div>
+          
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <div className="flex items-center gap-1 mb-2">
                   <label className="text-sm text-zinc-400">エポック数: {config.epochs}</label>
                   <ParameterHelp {...PARAM_HELP.epochs} />
-                </div>
+            </div>
                 <input
                   type="range"
                   min="10"
@@ -1204,13 +1206,13 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   onChange={(e) => setConfig({ ...config, epochs: parseInt(e.target.value) })}
                   className="w-full"
                 />
-              </div>
-              
+          </div>
+          
               <div>
                 <div className="flex items-center gap-1 mb-2">
                   <label className="text-sm text-zinc-400">バッチサイズ: {config.batchSize}</label>
                   <ParameterHelp {...PARAM_HELP.batchSize} />
-                </div>
+            </div>
                 <input
                   type="range"
                   min="8"
@@ -1219,14 +1221,14 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   value={config.batchSize}
                   onChange={(e) => setConfig({ ...config, batchSize: parseInt(e.target.value) })}
                   className="w-full"
-                />
-              </div>
+                  />
+                </div>
               
-              <div>
+            <div>
                 <div className="flex items-center gap-1 mb-2">
                   <label className="text-sm text-zinc-400">学習率: {config.learningRate}</label>
                   <ParameterHelp {...PARAM_HELP.learningRate} />
-                </div>
+            </div>
                 <input
                   type="range"
                   min="0.0001"
@@ -1236,8 +1238,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   onChange={(e) => setConfig({ ...config, learningRate: parseFloat(e.target.value) })}
                   className="w-full"
                 />
-              </div>
-            </div>
+          </div>
+        </div>
             
             {/* スマート推奨 */}
             {effectiveStats && (
@@ -1247,19 +1249,19 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   currentParams={config}
                   onApplyRecommendation={(params) => setConfig({ ...config, ...params })}
                 />
-              </div>
+        </div>
             )}
-          </section>
-          
+      </section>
+
           {/* ナビゲーションボタン */}
           <div className="flex justify-between">
-            <button
+              <button
               onClick={() => setCurrentStep('configure')}
               className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
-            >
+              >
               戻る
-            </button>
-            <button
+              </button>
+              <button
               onClick={() => setCurrentStep('training')}
               disabled={!isAugmentationComplete && dataSource === 'local'}
               className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
@@ -1272,7 +1274,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                 ? '拡張を実行してください'
                 : '次へ：訓練'}
               <ChevronRight className="w-5 h-5" />
-            </button>
+              </button>
           </div>
         </div>
       )}
@@ -1299,12 +1301,12 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
           {/* 戻るボタン（訓練中でなければ表示） */}
           {!isTrainingStarted && (
             <div className="flex justify-start">
-              <button
+        <button
                 onClick={() => setCurrentStep('augment')}
-                className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
-              >
+          className="flex items-center gap-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-xl font-semibold transition-all"
+        >
                 戻る
-              </button>
+        </button>
             </div>
           )}
         </div>

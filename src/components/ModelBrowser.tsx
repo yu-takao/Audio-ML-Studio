@@ -186,7 +186,6 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
 
       let lastErr: unknown = null;
       let text: string | null = null;
-      let usedPath: string | null = null;
 
       for (const metadataPath of candidates) {
         try {
@@ -195,7 +194,6 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
           const res = await fetch(signed.url.toString(), { cache: 'no-store' });
           if (!res.ok) throw new Error(`Failed to fetch metadata (${res.status})`);
           text = await res.text();
-          usedPath = metadataPath;
           break;
         } catch (e) {
           lastErr = e;
@@ -616,19 +614,19 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                         <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
                           <div className="text-xs text-zinc-500">train</div>
                           <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset.counts.train ?? '—'}
+                            {selectedModel.metadata.dataset?.counts?.train ?? '—'}
                           </div>
                         </div>
                         <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
                           <div className="text-xs text-zinc-500">validation</div>
                           <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset.counts.validation ?? '—'}
+                            {selectedModel.metadata.dataset?.counts?.validation ?? '—'}
                           </div>
                         </div>
                         <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
                           <div className="text-xs text-zinc-500">test</div>
                           <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset.counts.test ?? '—'}
+                            {selectedModel.metadata.dataset?.counts?.test ?? '—'}
                           </div>
                         </div>
                         <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">

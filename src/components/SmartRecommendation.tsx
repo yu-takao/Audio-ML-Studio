@@ -26,7 +26,13 @@ interface SmartRecommendationProps {
     validationSplit: number;
     testSplit: number;
   };
-  onApplyRecommendation: (params: Partial<typeof currentParams>) => void;
+  onApplyRecommendation: (params: Partial<{
+    epochs: number;
+    batchSize: number;
+    learningRate: number;
+    validationSplit: number;
+    testSplit: number;
+  }>) => void;
 }
 
 export function SmartRecommendation({
