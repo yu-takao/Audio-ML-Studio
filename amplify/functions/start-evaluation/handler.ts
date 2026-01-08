@@ -39,6 +39,14 @@ export const handler: Handler = async (event) => {
     const body: EvaluationRequest = JSON.parse(event.body || '{}');
     const { config, userId, jobName } = body;
 
+    console.log('Request body:', {
+      userId,
+      targetField: config?.targetField,
+      targetFieldType: typeof config?.targetField,
+      auxiliaryFields: config?.auxiliaryFields,
+      auxiliaryFieldsTypes: config?.auxiliaryFields?.map(f => typeof f),
+    });
+
     if (!config || !userId) {
       return {
         statusCode: 400,
@@ -65,6 +73,20 @@ export const handler: Handler = async (event) => {
     const processingImage = PROCESSING_IMAGES[region] || PROCESSING_IMAGES['ap-northeast-1'];
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const processingJobName = jobName || `audio-eval-${userId.slice(0, 8)}-${timestamp}`;
+
+    // 環境変数を文字列として準備
+    const environmentVars: Record<string, string> = {
+      BUCKET_NAME: String(bucket),
+      USER_ID: String(userId),
+      JOB_NAME: String(processingJobName),
+      TARGET_FIELD: String(config.targetField),
+      AUXILIARY_FIELDS: JSON.stringify((config.auxiliaryFields || []).map(String)),
+      CLASS_NAMES: JSON.stringify(config.classNames.map(String)),
+      INPUT_HEIGHT: String(config.inputHeight || 128),
+      INPUT_WIDTH: String(config.inputWidth || 128),
+    };
+
+    console.log('Environment variables:', environmentVars);
 
     // SageMaker Processing Jobの設定
     const command = new CreateProcessingJobCommand({
@@ -128,16 +150,7 @@ export const handler: Handler = async (event) => {
       StoppingCondition: {
         MaxRuntimeInSeconds: 3600, // 1時間
       },
-      Environment: {
-        BUCKET_NAME: bucket,
-        USER_ID: userId,
-        JOB_NAME: processingJobName,
-        TARGET_FIELD: String(config.targetField),
-        AUXILIARY_FIELDS: JSON.stringify(config.auxiliaryFields || []),
-        CLASS_NAMES: JSON.stringify(config.classNames),
-        INPUT_HEIGHT: String(config.inputHeight || 128),
-        INPUT_WIDTH: String(config.inputWidth || 128),
-      },
+      Environment: environmentVars,
       Tags: [
         { Key: 'Application', Value: 'AudioMLStudio' },
         { Key: 'JobType', Value: 'Evaluation' },
