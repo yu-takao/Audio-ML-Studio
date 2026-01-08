@@ -177,7 +177,8 @@ export function filterESC50Entries(
     const categoryTargets = options.categories.flatMap(
       (cat) => ESC50_CATEGORIES[cat].targets
     );
-    if (!categoryTargets.includes(entry.target as typeof categoryTargets[number])) {
+    // @ts-expect-error - Type narrowing issue with readonly arrays
+    if (!categoryTargets.includes(entry.target)) {
       return false;
     }
     
@@ -190,7 +191,8 @@ export function filterESC50Entries(
  */
 export function getCategoryFromTarget(target: number): ESC50CategoryKey | null {
   for (const [key, cat] of Object.entries(ESC50_CATEGORIES)) {
-    if (cat.targets.includes(target as typeof cat.targets[number])) {
+    // @ts-expect-error - Type narrowing issue with readonly arrays
+    if (cat.targets.includes(target)) {
       return key as ESC50CategoryKey;
     }
   }
