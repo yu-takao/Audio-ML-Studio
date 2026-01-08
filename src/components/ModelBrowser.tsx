@@ -967,7 +967,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                         if (!analysisImages[imgPath]) return;
                                         // サンプル別Grad-CAMのギャラリーを作成
                                         const gallery = selectedModel.analysisSummary!.sample_results
-                                          .map((s, i) => {
+                                          .map((s) => {
                                             const path = `${selectedModel.analysisPath}/${s.image}`;
                                             return analysisImages[path] ? { 
                                               url: analysisImages[path], 

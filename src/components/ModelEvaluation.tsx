@@ -214,7 +214,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       let uploadedCount = 0;
       for (const file of wavFiles) {
         const filePath = `${dataPath}/${file.name}`;
-        const blob = new Blob([await file.arrayBuffer()], { type: 'audio/wav' });
+        const blob = new Blob([await file.file.arrayBuffer()], { type: 'audio/wav' });
         await uploadData({
           path: filePath,
           data: blob,
