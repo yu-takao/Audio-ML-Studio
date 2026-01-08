@@ -14,8 +14,8 @@ const PROCESSING_IMAGES: Record<string, string> = {
 interface EvaluationConfig {
   dataPath: string; // S3パス（例: evaluation/temp/user123/dataset-20260108/）
   modelPath: string; // S3パス（例: models/user123/model.json）
-  targetField: string;
-  auxiliaryFields: string[];
+  targetField: number | string;
+  auxiliaryFields: (number | string)[];
   classNames: string[];
   inputHeight: number;
   inputWidth: number;
@@ -131,7 +131,7 @@ export const handler: Handler = async (event) => {
         BUCKET_NAME: bucket,
         USER_ID: userId,
         JOB_NAME: processingJobName,
-        TARGET_FIELD: config.targetField,
+        TARGET_FIELD: String(config.targetField),
         AUXILIARY_FIELDS: JSON.stringify(config.auxiliaryFields || []),
         CLASS_NAMES: JSON.stringify(config.classNames),
         INPUT_HEIGHT: String(config.inputHeight || 128),
