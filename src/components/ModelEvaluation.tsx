@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { list, uploadData, downloadData } from 'aws-amplify/storage';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import { useFileSystem } from '../hooks/useFileSystem';
 import { MetadataConfig } from './MetadataConfig';
 import { InferenceResults } from './InferenceResults';
@@ -203,16 +204,22 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     setIsUploading(true);
 
     try {
+      // 認証セッションからIdentity IDを取得
+      const session = await fetchAuthSession();
+      const identityId = session.identityId;
+      if (!identityId) {
+        throw new Error('Identity IDを取得できませんでした');
+      }
+
       // 1. データをS3にアップロード
       const timestamp = Date.now();
-      const dataPath = `evaluation/temp/${userId}/eval-${timestamp}`;
+      const dataPath = `evaluation/temp/${identityId}/eval-${timestamp}`;
 
       let uploadedCount = 0;
       for (const file of wavFiles) {
-        const filePath = `${dataPath}/${file.name}`;
         const blob = new Blob([await file.file.arrayBuffer()], { type: 'audio/wav' });
         await uploadData({
-          path: filePath,
+          path: ({ identityId }) => `evaluation/temp/${identityId}/eval-${timestamp}/${file.name}`,
           data: blob,
         }).result;
 
