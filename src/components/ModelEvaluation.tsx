@@ -199,6 +199,11 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       return;
     }
 
+    if (!startEvaluationUrl) {
+      setError('評価機能のエンドポイントが設定されていません');
+      return;
+    }
+
     setCurrentStep('running');
     setError(null);
     setIsUploading(true);
@@ -256,7 +261,9 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       });
 
       if (!response.ok) {
-        throw new Error('評価ジョブの開始に失敗しました');
+        const errorText = await response.text();
+        console.error('Lambda error response:', errorText);
+        throw new Error(`評価ジョブの開始に失敗しました: ${response.status} ${errorText}`);
       }
 
       const result = await response.json();

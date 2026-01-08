@@ -138,6 +138,10 @@ backend.startEvaluationFunction.resources.lambda.addEnvironment(
 );
 
 backend.getEvaluationStatusFunction.resources.lambda.addToRolePolicy(sagemakerPolicy);
+backend.getEvaluationStatusFunction.resources.lambda.addEnvironment(
+  'TRAINING_BUCKET',
+  backend.storage.resources.bucket.bucketName
+);
 
 // Lambda Function URLを追加（CORSはFunction URL側で処理）
 const startTrainingUrl = backend.startTrainingFunction.resources.lambda.addFunctionUrl({
