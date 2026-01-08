@@ -20,11 +20,8 @@ import {
   Play,
   RefreshCw,
   Calendar,
-  Database,
   Target,
   ChevronRight,
-  FileText,
-  Download,
 } from 'lucide-react';
 import outputs from '../../amplify_outputs.json';
 
@@ -84,7 +81,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     inputFolder,
     wavFiles,
     isLoading: isLoadingFiles,
-    error: fileError,
+    error: _fileError,
     selectInputFolder,
   } = useFileSystem();
 
@@ -217,9 +214,10 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       let uploadedCount = 0;
       for (const file of wavFiles) {
         const filePath = `${dataPath}/${file.name}`;
+        const blob = new Blob([await file.arrayBuffer()], { type: 'audio/wav' });
         await uploadData({
           path: filePath,
-          data: file,
+          data: blob,
         }).result;
 
         uploadedCount++;
@@ -231,11 +229,8 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       // 2. クラス名を生成
       const classNames = new Set<string>();
       for (const file of wavFiles) {
-        const parsed = analyzeFilenames([file.name], undefined, '_');
-        const fileMetadata = Object.fromEntries(
-          parsed.fields.map((f, i) => [String(i), f.uniqueValues[0] || ''])
-        );
-        const label = generateClassLabel(fileMetadata, targetConfig, auxiliaryFields);
+        if (!targetConfig) continue;
+        const label = generateClassLabel(file.name, undefined, targetConfig, '_');
         classNames.add(label);
       }
 
@@ -526,6 +521,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               auxiliaryFields={auxiliaryFields}
               onTargetConfigChange={setTargetConfig}
               onAuxiliaryFieldsChange={setAuxiliaryFields}
+              onFieldLabelChange={() => {}} // 評価時はラベル変更不要
             />
           </div>
 
