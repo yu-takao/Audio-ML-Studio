@@ -10,6 +10,8 @@ import {
   TrendingUp,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   BarChart3,
   Layers,
   Clock,
@@ -114,7 +116,8 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   const [isStartingAnalysis, setIsStartingAnalysis] = useState(false);
   const [analysisImages, setAnalysisImages] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
-  const [selectedAnalysisImage, setSelectedAnalysisImage] = useState<string | null>(null);
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number>(-1);
+  const [imageGallery, setImageGallery] = useState<Array<{ url: string; title: string }>>([]);
   
   // Lambda URL for analysis
   const startAnalysisUrl = (outputs as { custom?: { startAnalysisUrl?: string } }).custom?.startAnalysisUrl;
@@ -222,6 +225,27 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   useEffect(() => {
     loadModels();
   }, [loadModels]);
+
+  // キーボードショートカット
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedImageIndex < 0 || imageGallery.length === 0) return;
+
+      if (e.key === 'ArrowLeft' && selectedImageIndex > 0) {
+        e.preventDefault();
+        setSelectedImageIndex(selectedImageIndex - 1);
+      } else if (e.key === 'ArrowRight' && selectedImageIndex < imageGallery.length - 1) {
+        e.preventDefault();
+        setSelectedImageIndex(selectedImageIndex + 1);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedImageIndex(-1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedImageIndex, imageGallery.length]);
 
   // 日付フォーマット
   const formatDate = (date: Date) => {
@@ -801,7 +825,14 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                       src={analysisImages[imgPath]} 
                                       alt="Frequency Importance"
                                       className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                                      onClick={() => setSelectedAnalysisImage(analysisImages[imgPath])}
+                                      onClick={() => {
+                                        // すべての解析画像をギャラリーに追加
+                                        const gallery: Array<{ url: string; title: string }> = [
+                                          { url: analysisImages[imgPath], title: '周波数帯別の寄与度' }
+                                        ];
+                                        setImageGallery(gallery);
+                                        setSelectedImageIndex(0);
+                                      }}
                                     />
                                   ) : (
                                     <div className="h-32 flex items-center justify-center bg-zinc-800 rounded-lg">
@@ -823,7 +854,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                               クラス別平均Grad-CAM
                             </h6>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                              {selectedModel.analysisSummary.output_files.class_avg_gradcams.map((imgFile) => {
+                              {selectedModel.analysisSummary.output_files.class_avg_gradcams.map((imgFile, imgIndex) => {
                                 const imgPath = `${selectedModel.analysisPath}/${imgFile}`;
                                 const className = imgFile.replace('class_', '').replace('_avg_gradcam.png', '');
                                 if (!analysisImages[imgPath]) {
@@ -833,7 +864,19 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                   <div key={imgFile} className="space-y-1">
                                     <div 
                                       className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
-                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                      onClick={() => {
+                                        if (!analysisImages[imgPath]) return;
+                                        // クラス別Grad-CAMのギャラリーを作成
+                                        const gallery = selectedModel.analysisSummary!.output_files.class_avg_gradcams
+                                          .map((file) => {
+                                            const path = `${selectedModel.analysisPath}/${file}`;
+                                            const name = file.replace('class_', '').replace('_avg_gradcam.png', '');
+                                            return analysisImages[path] ? { url: analysisImages[path], title: `Class ${name} - Grad-CAM` } : null;
+                                          })
+                                          .filter((item): item is { url: string; title: string } => item !== null);
+                                        setImageGallery(gallery);
+                                        setSelectedImageIndex(imgIndex);
+                                      }}
                                     >
                                       {analysisImages[imgPath] ? (
                                         <img src={analysisImages[imgPath]} alt={className} className="w-full h-full object-cover" />
@@ -860,7 +903,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                               クラス別平均スペクトログラム
                             </h6>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                              {selectedModel.analysisSummary.output_files.class_avg_spectrograms.map((imgFile) => {
+                              {selectedModel.analysisSummary.output_files.class_avg_spectrograms.map((imgFile, imgIndex) => {
                                 const imgPath = `${selectedModel.analysisPath}/${imgFile}`;
                                 const className = imgFile.replace('class_', '').replace('_avg_spectrogram.png', '');
                                 if (!analysisImages[imgPath]) {
@@ -870,7 +913,19 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                   <div key={imgFile} className="space-y-1">
                                     <div 
                                       className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
-                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                      onClick={() => {
+                                        if (!analysisImages[imgPath]) return;
+                                        // クラス別スペクトログラムのギャラリーを作成
+                                        const gallery = selectedModel.analysisSummary!.output_files.class_avg_spectrograms
+                                          .map((file) => {
+                                            const path = `${selectedModel.analysisPath}/${file}`;
+                                            const name = file.replace('class_', '').replace('_avg_spectrogram.png', '');
+                                            return analysisImages[path] ? { url: analysisImages[path], title: `Class ${name} - スペクトログラム` } : null;
+                                          })
+                                          .filter((item): item is { url: string; title: string } => item !== null);
+                                        setImageGallery(gallery);
+                                        setSelectedImageIndex(imgIndex);
+                                      }}
                                     >
                                       {analysisImages[imgPath] ? (
                                         <img src={analysisImages[imgPath]} alt={className} className="w-full h-full object-cover" />
@@ -908,7 +963,21 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                     <div 
                                       key={idx} 
                                       className="flex items-center gap-3 p-2 rounded bg-zinc-800/50 hover:bg-zinc-800 cursor-pointer transition-colors"
-                                      onClick={() => analysisImages[imgPath] && setSelectedAnalysisImage(analysisImages[imgPath])}
+                                      onClick={() => {
+                                        if (!analysisImages[imgPath]) return;
+                                        // サンプル別Grad-CAMのギャラリーを作成
+                                        const gallery = selectedModel.analysisSummary!.sample_results
+                                          .map((s, i) => {
+                                            const path = `${selectedModel.analysisPath}/${s.image}`;
+                                            return analysisImages[path] ? { 
+                                              url: analysisImages[path], 
+                                              title: `${s.filename} - 予測: ${s.pred_class} (${(s.confidence * 100).toFixed(1)}%)` 
+                                            } : null;
+                                          })
+                                          .filter((item): item is { url: string; title: string } => item !== null);
+                                        setImageGallery(gallery);
+                                        setSelectedImageIndex(idx);
+                                      }}
                                     >
                                       <div className="w-16 h-10 bg-zinc-700 rounded overflow-hidden flex-shrink-0">
                                         {analysisImages[imgPath] ? (
@@ -968,21 +1037,68 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
       )}
 
       {/* 画像拡大モーダル */}
-      {selectedAnalysisImage && (
+      {selectedImageIndex >= 0 && imageGallery.length > 0 && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setSelectedAnalysisImage(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          onClick={() => setSelectedImageIndex(-1)}
         >
-          <div className="relative max-w-4xl max-h-[90vh] w-full">
-            <img 
-              src={selectedAnalysisImage} 
-              alt="Analysis" 
-              className="w-full h-auto max-h-[90vh] object-contain rounded-lg"
-              onClick={(e) => e.stopPropagation()}
-            />
+          <div className="relative max-w-6xl max-h-[90vh] w-full flex items-center justify-center">
+            {/* 画像 */}
+            <div className="relative">
+              <img 
+                src={imageGallery[selectedImageIndex].url} 
+                alt={imageGallery[selectedImageIndex].title} 
+                className="max-w-full max-h-[80vh] object-contain rounded-lg"
+                onClick={(e) => e.stopPropagation()}
+              />
+              
+              {/* タイトル */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 rounded-b-lg">
+                <p className="text-white text-sm font-medium text-center">
+                  {imageGallery[selectedImageIndex].title}
+                </p>
+                <p className="text-zinc-400 text-xs text-center mt-1">
+                  {selectedImageIndex + 1} / {imageGallery.length}
+                </p>
+              </div>
+            </div>
+
+            {/* 前へボタン */}
+            {selectedImageIndex > 0 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedImageIndex(selectedImageIndex - 1);
+                }}
+                className="absolute left-4 p-3 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors backdrop-blur-sm"
+                aria-label="前の画像"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* 次へボタン */}
+            {selectedImageIndex < imageGallery.length - 1 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedImageIndex(selectedImageIndex + 1);
+                }}
+                className="absolute right-4 p-3 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors backdrop-blur-sm"
+                aria-label="次の画像"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            )}
+
+            {/* 閉じるボタン */}
             <button
-              onClick={() => setSelectedAnalysisImage(null)}
-              className="absolute top-2 right-2 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedImageIndex(-1);
+              }}
+              className="absolute top-4 right-4 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors backdrop-blur-sm"
+              aria-label="閉じる"
             >
               <XCircle className="w-6 h-6" />
             </button>
