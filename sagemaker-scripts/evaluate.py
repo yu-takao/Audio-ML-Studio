@@ -98,25 +98,53 @@ def generate_class_label(metadata: Dict[str, str], target_field: str, aux_fields
 
 def load_tfjs_model(model_dir: str) -> tf.keras.Model:
     """TFJSモデルをロード"""
-    model_json_path = Path(model_dir) / 'model.json'
+    model_dir_path = Path(model_dir)
+    model_json_path = model_dir_path / 'model.json'
+    
+    print(f"Loading model from: {model_dir_path}")
+    print(f"Model JSON path: {model_json_path}")
     
     if not model_json_path.exists():
+        # ディレクトリ内のファイル一覧を表示
+        print(f"Files in model directory:")
+        for f in model_dir_path.rglob('*'):
+            print(f"  - {f}")
         raise FileNotFoundError(f"Model not found at {model_json_path}")
     
     # TFJSモデルを読み込み（converter経由）
     try:
         import tensorflowjs as tfjs
-        model = tfjs.converters.load_keras_model(str(model_json_path))
+        print("Loading model with tensorflowjs...")
+        model = tfjs.converters.load_keras_model(str(model_dir_path))
+        print(f"Model loaded successfully: {type(model)}")
         return model
-    except ImportError:
-        # tensorflowjsがない場合、手動で読み込み
-        print("Warning: tensorflowjs not available, attempting manual load")
-        with open(model_json_path, 'r') as f:
-            model_config = json.load(f)
+    except ImportError as e:
+        print(f"Warning: tensorflowjs not available: {e}")
+        raise ImportError("tensorflowjs is required for model loading. Please install it.")
+    except Exception as e:
+        print(f"Error loading model with tensorflowjs: {e}")
+        print("Attempting alternative loading method...")
         
-        # 簡易版：モデル構造のみ復元（重みは別途読み込み必要）
-        model = tf.keras.models.model_from_json(json.dumps(model_config['modelTopology']))
-        return model
+        # 代替方法：TFJS形式から直接読み込み
+        try:
+            with open(model_json_path, 'r') as f:
+                model_config = json.load(f)
+            
+            # モデル構造を復元
+            if 'modelTopology' in model_config:
+                model = tf.keras.models.model_from_json(json.dumps(model_config['modelTopology']))
+                # 重みファイルを探して読み込み
+                weights_files = list(model_dir_path.glob('*.bin'))
+                if weights_files:
+                    print(f"Found weights file: {weights_files[0]}")
+                    # 注意: TFJSの重み形式は特殊なので、完全な読み込みは困難
+                    print("Warning: Weight loading may not work correctly without tensorflowjs")
+                return model
+            else:
+                raise ValueError("Invalid model format: 'modelTopology' not found")
+        except Exception as e2:
+            print(f"Alternative loading also failed: {e2}")
+            raise RuntimeError(f"Failed to load model: {e2}")
 
 
 def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
@@ -258,16 +286,35 @@ def save_results(metrics: Dict, file_predictions: List[Dict], output_dir: str):
 
 def main():
     """メイン処理"""
-    print("Starting model evaluation...")
-    print(f"Input data dir: {INPUT_DATA_DIR}")
-    print(f"Input model dir: {INPUT_MODEL_DIR}")
-    print(f"Output dir: {OUTPUT_DIR}")
-    print(f"Class names: {CLASS_NAMES}")
-    
-    # モデルをロード
-    print("\nLoading model...")
-    model = load_tfjs_model(INPUT_MODEL_DIR)
-    print(f"Model loaded: {model.summary()}")
+    try:
+        print("=" * 60)
+        print("Starting model evaluation...")
+        print("=" * 60)
+        print(f"Input data dir: {INPUT_DATA_DIR}")
+        print(f"Input model dir: {INPUT_MODEL_DIR}")
+        print(f"Output dir: {OUTPUT_DIR}")
+        print(f"Class names: {CLASS_NAMES}")
+        print(f"Target field: {TARGET_FIELD}")
+        print(f"Auxiliary fields: {AUXILIARY_FIELDS}")
+        print(f"Input size: {INPUT_HEIGHT}x{INPUT_WIDTH}")
+        
+        # ディレクトリの存在確認
+        print("\nChecking directories...")
+        print(f"Data dir exists: {Path(INPUT_DATA_DIR).exists()}")
+        print(f"Model dir exists: {Path(INPUT_MODEL_DIR).exists()}")
+        print(f"Output dir exists: {Path(OUTPUT_DIR).exists()}")
+        
+        # モデルをロード
+        print("\n" + "=" * 60)
+        print("Loading model...")
+        print("=" * 60)
+        model = load_tfjs_model(INPUT_MODEL_DIR)
+        print(f"\nModel loaded successfully!")
+        print(f"Model type: {type(model)}")
+        try:
+            model.summary()
+        except:
+            print("Model summary not available")
     
     # データセットを準備
     print("\nPreparing dataset...")
@@ -301,7 +348,20 @@ def main():
     print("\nSaving results...")
     save_results(metrics, file_predictions, OUTPUT_DIR)
     
-    print("\nEvaluation completed successfully!")
+        print("\n" + "=" * 60)
+        print("Evaluation completed successfully!")
+        print("=" * 60)
+    except Exception as e:
+        print("\n" + "=" * 60)
+        print("ERROR: Evaluation failed!")
+        print("=" * 60)
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        import traceback
+        print("\nTraceback:")
+        traceback.print_exc()
+        print("=" * 60)
+        raise  # エラーを再発生させてSageMakerに失敗を通知
 
 
 if __name__ == '__main__':

@@ -94,17 +94,21 @@ export const handler: Handler = async (event) => {
       RoleArn: sagemakerRoleArn,
       AppSpecification: {
         ImageUri: processingImage,
-        ContainerEntrypoint: ['python3', '/opt/ml/processing/input/code/evaluate.py'],
+        ContainerEntrypoint: ['bash', '-c'],
+        ContainerArguments: [
+          'cd /opt/ml/processing/input/code && tar -xzf evaluation-scripts.tar.gz && python3 evaluate.py',
+        ],
       },
       ProcessingInputs: [
-        // 評価スクリプト
+        // 評価スクリプト（tar.gz形式）
         {
           InputName: 'code',
           S3Input: {
-            S3Uri: `s3://${bucket}/public/scripts/evaluation/`,
+            S3Uri: `s3://${bucket}/public/scripts/evaluation-scripts.tar.gz`,
             LocalPath: '/opt/ml/processing/input/code',
-            S3DataType: 'S3Prefix',
+            S3DataType: 'S3Object',
             S3InputMode: 'File',
+            S3DataDistributionType: 'FullyReplicated',
           },
         },
         // 評価データ

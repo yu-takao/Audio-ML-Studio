@@ -1,10 +1,12 @@
-# SageMaker Processing Script Dependencies for Analysis
+# SageMaker Processing Script Dependencies for Analysis and Evaluation
 tensorflow>=2.13.0
+tensorflowjs>=4.15.0
 librosa==0.10.1
 scikit-learn==1.3.2
 numpy>=1.23.0
 matplotlib>=3.7.0
 boto3>=1.34.0
+scipy>=1.11.0
 
 
 
