@@ -3,12 +3,13 @@ import { SageMakerClient, CreateProcessingJobCommand } from '@aws-sdk/client-sag
 
 const sagemakerClient = new SageMakerClient({});
 
-// AWS提供のScikit-learn/TensorFlowイメージ（リージョン別）
+// AWS提供のTensorFlow Processingイメージ（リージョン別）
+// tensorflow-inference イメージ（Processing Job対応、TensorFlow含む）
 const PROCESSING_IMAGES: Record<string, string> = {
-  'ap-northeast-1': '763104351884.dkr.ecr.ap-northeast-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
-  'us-east-1': '763104351884.dkr.ecr.us-east-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
-  'us-west-2': '763104351884.dkr.ecr.us-west-2.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
-  'eu-west-1': '763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
+  'ap-northeast-1': '763104351884.dkr.ecr.ap-northeast-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
+  'us-east-1': '763104351884.dkr.ecr.us-east-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
+  'us-west-2': '763104351884.dkr.ecr.us-west-2.amazonaws.com/tensorflow-inference:2.12.1-cpu',
+  'eu-west-1': '763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
 };
 
 interface EvaluationConfig {
@@ -94,19 +95,16 @@ export const handler: Handler = async (event) => {
       RoleArn: sagemakerRoleArn,
       AppSpecification: {
         ImageUri: processingImage,
-        ContainerEntrypoint: ['bash', '-c'],
-        ContainerArguments: [
-          'cd /opt/ml/processing/input/code && tar -xzf evaluation-scripts.tar.gz && python3 evaluate.py',
-        ],
+        ContainerEntrypoint: ['python3', '/opt/ml/processing/input/code/evaluate.py'],
       },
       ProcessingInputs: [
-        // 評価スクリプト（tar.gz形式）
+        // 評価スクリプト（個別ファイルとしてフォルダから）
         {
           InputName: 'code',
           S3Input: {
-            S3Uri: `s3://${bucket}/public/scripts/evaluation-scripts.tar.gz`,
+            S3Uri: `s3://${bucket}/public/scripts/evaluation/`,
             LocalPath: '/opt/ml/processing/input/code',
-            S3DataType: 'S3Object',
+            S3DataType: 'S3Prefix',
             S3InputMode: 'File',
             S3DataDistributionType: 'FullyReplicated',
           },
