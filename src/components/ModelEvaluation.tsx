@@ -36,7 +36,7 @@ interface SavedModel {
   createdAt: Date;
   classes?: string[];
   targetField?: string;
-  auxiliaryFields?: string[];
+  auxiliaryFields?: AuxiliaryFieldConfig[];
 }
 
 // 評価ジョブのステータス
@@ -109,52 +109,48 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
   const loadSavedModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
+      // ユーザー専用のモデルパスを取得
       const result = await list({
-        path: `models/`,
+        path: `models/${userId}/`,
+        options: {
+          listAll: true,
+        },
       });
 
-      const modelFolders = new Map<string, { path: string; lastModified: Date }>();
-
-      for (const item of result.items) {
-        if (item.path.endsWith('model.json')) {
-          const folderMatch = item.path.match(/models\/([^/]+)\//);
-          if (folderMatch) {
-            const folderName = folderMatch[1];
-            const existing = modelFolders.get(folderName);
-            if (!existing || item.lastModified! > existing.lastModified) {
-              modelFolders.set(folderName, {
-                path: item.path.replace('/model.json', ''),
-                lastModified: item.lastModified!,
-              });
-            }
-          }
-        }
-      }
-
+      // model.tar.gz をモデルの存在判定に利用
       const models: SavedModel[] = [];
-      for (const [name, info] of modelFolders) {
-        // メタデータを読み込む
-        try {
-          const metadataPath = `${info.path}/metadata.json`;
-          const metadataResult = await downloadData({ path: metadataPath }).result;
-          const metadataText = await metadataResult.body.text();
-          const metadata = JSON.parse(metadataText);
+      
+      for (const item of result.items) {
+        if (item.path.endsWith('model.tar.gz')) {
+          // models/{userId}/{jobName}/output/model.tar.gz のパターン
+          const parts = item.path.split('/');
+          const jobName = parts.length >= 4 ? parts[2] : 'unknown';
+          const modelPath = parts.slice(0, parts.length - 1).join('/'); // models/{userId}/{jobName}/output
 
-          models.push({
-            path: info.path,
-            name,
-            createdAt: info.lastModified,
-            classes: metadata.classes || [],
-            targetField: metadata.target_field,
-            auxiliaryFields: metadata.auxiliary_fields || [],
-          });
-        } catch {
-          // メタデータがない場合
-          models.push({
-            path: info.path,
-            name,
-            createdAt: info.lastModified,
-          });
+          // メタデータを読み込む
+          try {
+            const metadataPath = `${modelPath}/model_metadata.json`;
+            const metadataResult = await downloadData({ path: metadataPath }).result;
+            const metadataText = await metadataResult.body.text();
+            const metadata = JSON.parse(metadataText);
+
+            models.push({
+              path: modelPath,
+              name: jobName,
+              createdAt: item.lastModified || new Date(),
+              classes: metadata.classes || [],
+              targetField: metadata.target_field,
+              auxiliaryFields: metadata.auxiliary_fields || [],
+            });
+          } catch (err) {
+            // メタデータがない場合もモデルは表示
+            console.warn(`Metadata not found for ${jobName}:`, err);
+            models.push({
+              path: modelPath,
+              name: jobName,
+              createdAt: item.lastModified || new Date(),
+            });
+          }
         }
       }
 
@@ -166,7 +162,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     } finally {
       setIsLoadingModels(false);
     }
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     loadSavedModels();
