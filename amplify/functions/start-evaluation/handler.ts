@@ -33,6 +33,7 @@ const responseHeaders = {
 
 export const handler: Handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));
+  console.log('Start evaluation job request');
 
   try {
     const body: EvaluationRequest = JSON.parse(event.body || '{}');

@@ -4,5 +4,6 @@ export const startEvaluationFunction = defineFunction({
   name: 'start-evaluation',
   timeoutSeconds: 60,
   memoryMB: 512,
+  // Updated: 2026-01-08
 });
 
