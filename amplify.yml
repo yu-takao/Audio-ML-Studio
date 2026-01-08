@@ -2,6 +2,10 @@ version: 1
 
 backend:
   phases:
+    preBuild:
+      commands:
+        # Install dependencies first
+        - npm ci
     build:
       commands:
         # Amplify Gen2: deploy backend and generate amplify_outputs.json for this branch
@@ -11,7 +15,8 @@ frontend:
   phases:
     preBuild:
       commands:
-        - npm ci
+        # Dependencies already installed in backend phase
+        - echo "Using cached node_modules from backend build"
     build:
       commands:
         - npm run build
