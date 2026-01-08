@@ -141,6 +141,7 @@ export function CloudTraining({
   const [savedJobs, setSavedJobs] = useState<TrainingJob[]>([]);
   const [showPastJobs, setShowPastJobs] = useState(false);
   const [isRestoringJob, setIsRestoringJob] = useState(false);
+  // @ts-expect-error - Used in loadTrainingHistoryFromS3
   const [isLoadingJobs, setIsLoadingJobs] = useState(true);
 
   // S3での訓練履歴パス

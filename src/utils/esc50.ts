@@ -177,7 +177,7 @@ export function filterESC50Entries(
     const categoryTargets = options.categories.flatMap(
       (cat) => ESC50_CATEGORIES[cat].targets
     );
-    if (!categoryTargets.includes(entry.target)) {
+    if (!categoryTargets.includes(entry.target as typeof categoryTargets[number])) {
       return false;
     }
     
@@ -190,7 +190,7 @@ export function filterESC50Entries(
  */
 export function getCategoryFromTarget(target: number): ESC50CategoryKey | null {
   for (const [key, cat] of Object.entries(ESC50_CATEGORIES)) {
-    if (cat.targets.includes(target)) {
+    if (cat.targets.includes(target as typeof cat.targets[number])) {
       return key as ESC50CategoryKey;
     }
   }

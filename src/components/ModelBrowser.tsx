@@ -632,7 +632,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                         <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
                           <div className="text-xs text-zinc-500">total</div>
                           <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset.counts.total ?? '—'}
+                            {selectedModel.metadata.dataset?.counts?.total ?? '—'}
                           </div>
                         </div>
                       </div>

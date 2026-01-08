@@ -240,9 +240,9 @@ export function ClassBalancer({
           }
 
           if (config.augmentationTypes.combined) {
-            let augmented = samples.slice();
-            augmented = applyTimeShift(augmented, Math.round(randomInRange(-sampleRate * 0.03, sampleRate * 0.03)));
-            augmented = applyGain(augmented, randomInRange(-2, 2));
+            let augmented = samples.slice() as Float32Array;
+            augmented = applyTimeShift(augmented, Math.round(randomInRange(-sampleRate * 0.03, sampleRate * 0.03))) as Float32Array;
+            augmented = applyGain(augmented, randomInRange(-2, 2)) as Float32Array;
             augmentations.push({
               name: `${baseName}_bal_comb_${classGenerated + 1}.wav`,
               samples: augmented,

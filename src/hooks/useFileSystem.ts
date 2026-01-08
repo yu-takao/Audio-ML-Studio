@@ -44,10 +44,10 @@ export function useFileSystem(): UseFileSystemResult {
       if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.wav')) {
         // deletedフォルダは除外
         if (!path.includes('deleted')) {
-          const file = await entry.getFile();
+          const file = await (entry as FileSystemFileHandle).getFile();
           files.push({
             name: path ? `${path}/${entry.name}` : entry.name,
-            handle: entry,
+            handle: entry as FileSystemFileHandle,
             file,
           });
         }
@@ -55,7 +55,7 @@ export function useFileSystem(): UseFileSystemResult {
         // サブフォルダも再帰的に探索（deletedフォルダは除外）
         if (entry.name !== 'deleted') {
           const subPath = path ? `${path}/${entry.name}` : entry.name;
-          const subFiles = await getWavFilesFromDirectory(entry, subPath);
+          const subFiles = await getWavFilesFromDirectory(entry as FileSystemDirectoryHandle, subPath);
           files.push(...subFiles);
         }
       }
