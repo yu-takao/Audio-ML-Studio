@@ -8,6 +8,26 @@ SageMaker Processing Script for Model Evaluation
 - TFJSモデルを読み込み、テストデータで評価
 """
 
+# 必要なパッケージをインストール（SageMaker Processing環境用）
+import subprocess
+import sys
+
+def install_packages():
+    """必要なパッケージをインストール"""
+    # scikit-learn Processing イメージには numpy, scipy, scikit-learn がプリインストール済み
+    # TensorFlow のみをインストール
+    packages = ['tensorflow']
+    for package in packages:
+        print(f"Installing {package}...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', '--no-cache-dir', package])
+    print("All packages installed successfully!")
+
+# パッケージをインストール
+print("=" * 60)
+print("Setting up environment...")
+print("=" * 60)
+install_packages()
+
 import os
 import json
 import numpy as np

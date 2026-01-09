@@ -3,13 +3,13 @@ import { SageMakerClient, CreateProcessingJobCommand } from '@aws-sdk/client-sag
 
 const sagemakerClient = new SageMakerClient({});
 
-// AWS提供のTensorFlow Processingイメージ（リージョン別）
-// tensorflow-inference イメージ（Processing Job対応、TensorFlow含む）
+// AWS提供のScikit-learn Processingイメージ（リージョン別）
+// numpy, scipy, scikit-learnがプリインストール済み
 const PROCESSING_IMAGES: Record<string, string> = {
-  'ap-northeast-1': '763104351884.dkr.ecr.ap-northeast-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
-  'us-east-1': '763104351884.dkr.ecr.us-east-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
-  'us-west-2': '763104351884.dkr.ecr.us-west-2.amazonaws.com/tensorflow-inference:2.12.1-cpu',
-  'eu-west-1': '763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-inference:2.12.1-cpu',
+  'ap-northeast-1': '354813040037.dkr.ecr.ap-northeast-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+  'us-east-1': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+  'us-west-2': '246618743249.dkr.ecr.us-west-2.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+  'eu-west-1': '141502667606.dkr.ecr.eu-west-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
 };
 
 interface EvaluationConfig {
