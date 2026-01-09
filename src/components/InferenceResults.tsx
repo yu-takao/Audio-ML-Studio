@@ -12,11 +12,19 @@ interface ClassMetric {
 
 interface EvaluationMetrics {
   accuracy: number;
-  precision: number;
-  recall: number;
-  f1_score: number;
-  confusion_matrix: number[][];
-  class_metrics: ClassMetric[];
+  precision?: number;
+  recall?: number;
+  f1_score?: number;
+  confusion_matrix?: number[][];
+  class_metrics?: ClassMetric[];
+  // 回帰用の指標
+  mae?: number;
+  mse?: number;
+  rmse?: number;
+  r2_score?: number;
+  tolerance?: number;
+  accuracy_with_tolerance?: number;
+  problem_type?: 'classification' | 'regression';
 }
 
 interface FilePrediction {
@@ -51,35 +59,68 @@ export function InferenceResults({ metrics, predictions, classNames }: Inference
     };
   }, [predictions]);
 
+  const isRegression = metrics.problem_type === 'regression';
+
   return (
     <div className="space-y-6">
       {/* 全体メトリクス */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard
-          icon={<Target className="w-5 h-5" />}
-          label="精度 (Accuracy)"
-          value={`${(metrics.accuracy * 100).toFixed(2)}%`}
-          color="violet"
-        />
-        <MetricCard
-          icon={<Award className="w-5 h-5" />}
-          label="F1スコア"
-          value={metrics.f1_score.toFixed(4)}
-          color="blue"
-        />
-        <MetricCard
-          icon={<CheckCircle2 className="w-5 h-5" />}
-          label="適合率 (Precision)"
-          value={metrics.precision.toFixed(4)}
-          color="green"
-        />
-        <MetricCard
-          icon={<TrendingUp className="w-5 h-5" />}
-          label="再現率 (Recall)"
-          value={metrics.recall.toFixed(4)}
-          color="cyan"
-        />
-      </div>
+      {isRegression ? (
+        // 回帰問題の指標
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard
+            icon={<Target className="w-5 h-5" />}
+            label={`許容範囲内 (±${metrics.tolerance})`}
+            value={`${(metrics.accuracy * 100).toFixed(2)}%`}
+            color="violet"
+          />
+          <MetricCard
+            icon={<Award className="w-5 h-5" />}
+            label="MAE (平均絶対誤差)"
+            value={metrics.mae?.toFixed(4) || 'N/A'}
+            color="blue"
+          />
+          <MetricCard
+            icon={<CheckCircle2 className="w-5 h-5" />}
+            label="RMSE (二乗平均平方根誤差)"
+            value={metrics.rmse?.toFixed(4) || 'N/A'}
+            color="green"
+          />
+          <MetricCard
+            icon={<TrendingUp className="w-5 h-5" />}
+            label="R² スコア"
+            value={metrics.r2_score?.toFixed(4) || 'N/A'}
+            color="cyan"
+          />
+        </div>
+      ) : (
+        // 分類問題の指標
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard
+            icon={<Target className="w-5 h-5" />}
+            label={metrics.tolerance && metrics.tolerance > 0 ? `精度 (許容範囲±${metrics.tolerance})` : "精度 (Accuracy)"}
+            value={`${((metrics.accuracy_with_tolerance || metrics.accuracy) * 100).toFixed(2)}%`}
+            color="violet"
+          />
+          <MetricCard
+            icon={<Award className="w-5 h-5" />}
+            label="F1スコア"
+            value={metrics.f1_score?.toFixed(4) || 'N/A'}
+            color="blue"
+          />
+          <MetricCard
+            icon={<CheckCircle2 className="w-5 h-5" />}
+            label="適合率 (Precision)"
+            value={metrics.precision?.toFixed(4) || 'N/A'}
+            color="green"
+          />
+          <MetricCard
+            icon={<TrendingUp className="w-5 h-5" />}
+            label="再現率 (Recall)"
+            value={metrics.recall?.toFixed(4) || 'N/A'}
+            color="cyan"
+          />
+        </div>
+      )}
 
       {/* サンプル数サマリー */}
       {predictions && (
@@ -102,46 +143,50 @@ export function InferenceResults({ metrics, predictions, classNames }: Inference
         </div>
       )}
 
-      {/* 混同行列 */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">混同行列 (Confusion Matrix)</h3>
-        <ConfusionMatrix matrix={metrics.confusion_matrix} classNames={classNames} />
-      </div>
-
-      {/* クラス別メトリクス */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">クラス別の性能</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-zinc-800">
-                <th className="text-left py-3 px-4 text-sm font-medium text-zinc-400">クラス</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">適合率</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">再現率</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">F1スコア</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">サポート</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metrics.class_metrics.map((cm, idx) => (
-                <tr key={idx} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                  <td className="py-3 px-4 text-sm text-white font-medium">{cm.class_name}</td>
-                  <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
-                    {cm.precision.toFixed(4)}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
-                    {cm.recall.toFixed(4)}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
-                    {cm.f1_score.toFixed(4)}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-zinc-400 text-right">{cm.support}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* 混同行列（分類問題のみ） */}
+      {!isRegression && metrics.confusion_matrix && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-4">混同行列 (Confusion Matrix)</h3>
+          <ConfusionMatrix matrix={metrics.confusion_matrix} classNames={classNames} />
         </div>
-      </div>
+      )}
+
+      {/* クラス別メトリクス（分類問題のみ） */}
+      {!isRegression && metrics.class_metrics && metrics.class_metrics.length > 0 && (
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+          <h3 className="text-lg font-semibold text-white mb-4">クラス別の性能</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-800">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-zinc-400">クラス</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">適合率</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">再現率</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">F1スコア</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-zinc-400">サポート</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.class_metrics.map((cm, idx) => (
+                  <tr key={idx} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                    <td className="py-3 px-4 text-sm text-white font-medium">{cm.class_name}</td>
+                    <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
+                      {cm.precision.toFixed(4)}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
+                      {cm.recall.toFixed(4)}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-zinc-300 text-right font-mono">
+                      {cm.f1_score.toFixed(4)}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-zinc-400 text-right">{cm.support}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ファイル別の予測結果（オプション） */}
       {predictions && predictions.length > 0 && (

@@ -37,6 +37,8 @@ def parse_args():
     parser.add_argument('--target_field', type=str, default='0')
     parser.add_argument('--auxiliary_fields', type=str, default='[]')
     parser.add_argument('--field_labels', type=str, default='[]')  # フィールドラベル情報
+    parser.add_argument('--problem_type', type=str, default='classification')  # 問題タイプ
+    parser.add_argument('--tolerance', type=float, default=0.0)  # 許容範囲
     parser.add_argument('--class_names', type=str, default='[]')
     
     # SageMaker 環境変数
@@ -128,12 +130,14 @@ def build_model(
     input_height: int,
     input_width: int,
     num_classes: int,
-    num_auxiliary: int = 0
+    num_auxiliary: int = 0,
+    problem_type: str = 'classification'
 ) -> keras.Model:
-    """2D-CNNモデルを構築"""
+    """2D-CNNモデルを構築（分類または回帰）"""
     
     spec_input = keras.Input(shape=(input_height, input_width, 1), name='spectrogram_input')
     
+    # CNN特徴抽出器（共通部分）
     x = keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same')(spec_input)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.MaxPooling2D((2, 2))(x)
@@ -153,6 +157,7 @@ def build_model(
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.GlobalAveragePooling2D()(x)
     
+    # 補助入力の処理（共通部分）
     if num_auxiliary > 0:
         aux_input = keras.Input(shape=(num_auxiliary,), name='auxiliary_input')
         aux_dense = keras.layers.Dense(32, activation='relu')(aux_input)
@@ -160,30 +165,36 @@ def build_model(
         combined = keras.layers.concatenate([x, aux_dense])
         x = keras.layers.Dense(128, activation='relu')(combined)
         x = keras.layers.Dropout(0.5)(x)
-        output = keras.layers.Dense(num_classes, activation='softmax', name='output')(x)
-        model = keras.Model(inputs=[spec_input, aux_input], outputs=output)
+        inputs = [spec_input, aux_input]
     else:
         x = keras.layers.Dense(128, activation='relu')(x)
         x = keras.layers.Dropout(0.5)(x)
-        output = keras.layers.Dense(num_classes, activation='softmax', name='output')(x)
-        model = keras.Model(inputs=spec_input, outputs=output)
+        inputs = spec_input
     
+    # 出力層（問題タイプに応じて分岐）
+    if problem_type == 'regression':
+        output = keras.layers.Dense(1, activation='linear', name='output')(x)
+    else:  # classification
+        output = keras.layers.Dense(num_classes, activation='softmax', name='output')(x)
+    
+    model = keras.Model(inputs=inputs, outputs=output)
     return model
 
 
-def load_dataset(args, class_names: list, target_field: int, auxiliary_fields: list):
+def load_dataset(args, class_names: list, target_field: int, auxiliary_fields: list, problem_type: str = 'classification'):
     """データセットを読み込み"""
     data_dir = args.train
     input_height = args.input_height
     input_width = args.input_width
     
     print(f"Loading dataset from {data_dir}")
+    print(f"Problem type: {problem_type}")
     
     spectrograms = []
     auxiliary_data = []
     labels = []
     
-    class_to_idx = {name: idx for idx, name in enumerate(class_names)}
+    class_to_idx = {name: idx for idx, name in enumerate(class_names)} if problem_type == 'classification' else {}
     
     for root, dirs, files in os.walk(data_dir):
         for filename in files:
@@ -204,13 +215,24 @@ def load_dataset(args, class_names: list, target_field: int, auxiliary_fields: l
                 spectrograms.pop()
                 continue
             
-            label_str = str(target_value)
-            if label_str in class_to_idx:
-                labels.append(class_to_idx[label_str])
+            # 問題タイプに応じてラベルを処理
+            if problem_type == 'regression':
+                # 回帰問題：数値として扱う
+                try:
+                    labels.append(float(target_value))
+                except ValueError:
+                    print(f"Warning: Cannot convert {target_value} to float in {filename}")
+                    spectrograms.pop()
+                    continue
             else:
-                print(f"Warning: Unknown class {label_str} in {filename}")
-                spectrograms.pop()
-                continue
+                # 分類問題：クラスインデックスに変換
+                label_str = str(target_value)
+                if label_str in class_to_idx:
+                    labels.append(class_to_idx[label_str])
+                else:
+                    print(f"Warning: Unknown class {label_str} in {filename}")
+                    spectrograms.pop()
+                    continue
             
             if auxiliary_fields:
                 aux_values = []
@@ -225,7 +247,12 @@ def load_dataset(args, class_names: list, target_field: int, auxiliary_fields: l
     print(f"Loaded {len(spectrograms)} samples")
     
     X = np.array(spectrograms)[..., np.newaxis]
-    y = keras.utils.to_categorical(labels, num_classes=len(class_names))
+    
+    # 問題タイプに応じてラベルを処理
+    if problem_type == 'regression':
+        y = np.array(labels, dtype=float)  # 回帰：連続値
+    else:
+        y = keras.utils.to_categorical(labels, num_classes=len(class_names))  # 分類：one-hot
     
     X_aux = None
     if auxiliary_fields:
@@ -255,15 +282,19 @@ def main():
     
     auxiliary_fields = json.loads(args.auxiliary_fields)
     field_labels = json.loads(args.field_labels)  # フィールドラベル情報
+    problem_type = args.problem_type  # 問題タイプ
+    tolerance = args.tolerance  # 許容範囲
     class_names = json.loads(args.class_names)
     target_field = int(args.target_field)
     
+    print(f"Problem type: {problem_type}")
+    print(f"Tolerance: {tolerance}")
     print(f"Class names: {class_names}")
     print(f"Target field: {target_field}")
     print(f"Auxiliary fields: {auxiliary_fields}")
     print(f"Field labels: {field_labels}")
     
-    X, X_aux, y = load_dataset(args, class_names, target_field, auxiliary_fields)
+    X, X_aux, y = load_dataset(args, class_names, target_field, auxiliary_fields, problem_type)
     
     print(f"X shape: {X.shape}")
     print(f"y shape: {y.shape}")
@@ -290,18 +321,28 @@ def main():
     
     # モデル構築
     num_auxiliary = len(auxiliary_fields)
+    num_classes = len(class_names) if problem_type == 'classification' else 1
     model = build_model(
         input_height=args.input_height,
         input_width=args.input_width,
-        num_classes=len(class_names),
-        num_auxiliary=num_auxiliary
+        num_classes=num_classes,
+        num_auxiliary=num_auxiliary,
+        problem_type=problem_type
     )
     
-    model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
-    )
+    # コンパイル（問題タイプに応じて）
+    if problem_type == 'regression':
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
+            loss='mean_absolute_error',
+            metrics=['mae', 'mse']
+        )
+    else:  # classification
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=args.learning_rate),
+            loss='categorical_crossentropy',
+            metrics=['accuracy']
+        )
     
     model.summary()
     
@@ -362,6 +403,8 @@ def main():
         'target_field': target_field,
         'auxiliary_fields': auxiliary_fields,
         'field_labels': field_labels,  # フィールドラベル情報を保存
+        'problem_type': problem_type,  # 問題タイプを保存
+        'tolerance': tolerance,  # 許容範囲を保存
         'input_height': args.input_height,
         'input_width': args.input_width,
         'test_accuracy': float(test_acc),

@@ -174,6 +174,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   const [metadata, setMetadata] = useState<ParsedMetadata | null>(null);
   const [targetConfig, setTargetConfig] = useState<TargetFieldConfig | null>(null);
   const [auxiliaryFields, setAuxiliaryFields] = useState<AuxiliaryFieldConfig[]>([]);
+  const [problemType, setProblemType] = useState<'classification' | 'regression'>('classification');
+  const [tolerance, setTolerance] = useState<number>(0);
   const [fileInfoList, setFileInfoList] = useState<FileInfo[]>([]);
   
   // 訓練設定
@@ -976,6 +978,10 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
           onTargetConfigChange={setTargetConfig}
           auxiliaryFields={auxiliaryFields}
           onAuxiliaryFieldsChange={setAuxiliaryFields}
+          problemType={problemType}
+          onProblemTypeChange={setProblemType}
+          tolerance={tolerance}
+          onToleranceChange={setTolerance}
         />
       )}
 
@@ -1289,6 +1295,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
             targetField={targetConfig?.fieldIndex?.toString() || '0'}
             auxiliaryFields={auxiliaryFields.map(f => f.fieldIndex.toString())}
             fieldLabels={metadata?.fields.map(f => ({ index: f.index, label: f.label })) || []}
+            problemType={problemType}
+            tolerance={tolerance}
             fileInfoList={finalFileInfoList}
             s3DatasetPath={dataSource === 's3' ? selectedS3Dataset?.path : undefined}
             onModelReady={(modelPath) => {

@@ -55,17 +55,25 @@ type Step = 'select-model' | 'select-data' | 'configure-metadata' | 'running' | 
 
 interface EvaluationMetrics {
   accuracy: number;
-  precision: number;
-  recall: number;
-  f1_score: number;
-  confusion_matrix: number[][];
-  class_metrics: Array<{
+  precision?: number;
+  recall?: number;
+  f1_score?: number;
+  confusion_matrix?: number[][];
+  class_metrics?: Array<{
     class_name: string;
     precision: number;
     recall: number;
     f1_score: number;
     support: number;
   }>;
+  // 回帰用の指標
+  mae?: number;
+  mse?: number;
+  rmse?: number;
+  r2_score?: number;
+  tolerance?: number;
+  accuracy_with_tolerance?: number;
+  problem_type?: 'classification' | 'regression';
 }
 
 interface FilePrediction {

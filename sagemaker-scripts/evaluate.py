@@ -330,8 +330,11 @@ def main():
         except:
             print("Model summary not available")
         
-        # label_encoder.jsonからクラス名を読み込み（訓練時のクラス名を使用）
+        # label_encoder.jsonからクラス名と問題タイプを読み込み（訓練時の設定を使用）
         label_encoder_path = Path(INPUT_MODEL_DIR) / 'label_encoder.json'
+        problem_type = 'classification'  # デフォルト
+        tolerance = 0.0  # デフォルト
+        
         if label_encoder_path.exists():
             print(f"\nLoading label encoder from: {label_encoder_path}")
             with open(label_encoder_path, 'r') as f:
@@ -339,38 +342,100 @@ def main():
                 # 訓練時のクラス名で上書き（重要：これにより正しいクラス数とクラス名を使用）
                 global CLASS_NAMES
                 CLASS_NAMES = label_encoder.get('classes', CLASS_NAMES)
+                problem_type = label_encoder.get('problem_type', 'classification')
+                tolerance = float(label_encoder.get('tolerance', 0.0))
                 print(f"Loaded {len(CLASS_NAMES)} classes from label encoder: {CLASS_NAMES}")
+                print(f"Problem type: {problem_type}")
+                print(f"Tolerance: {tolerance}")
         else:
             print(f"\nWarning: label_encoder.json not found at {label_encoder_path}")
             print(f"Using CLASS_NAMES from environment: {CLASS_NAMES}")
+            print(f"Using default problem_type: {problem_type}")
         
         # データセットを準備
         print("\nPreparing dataset...")
         X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR)
         
-        # 予測
+        # 予測（問題タイプに応じて処理）
         print("\nRunning inference...")
         predictions = model.predict(X, batch_size=32, verbose=1)
-        y_pred = np.argmax(predictions, axis=1)
         
         # ファイル別の予測結果
         file_predictions = []
-        for i, (filename, true_label, pred_idx) in enumerate(zip(file_list, label_list, y_pred)):
-            pred_label = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else f'Class_{pred_idx}'
-            confidence = float(np.max(predictions[i]))
-            correct = (y_true[i] == pred_idx)
-            
-            file_predictions.append({
-                'filename': filename,
-                'true_label': true_label,
-                'predicted_label': pred_label,
-                'confidence': f'{confidence:.4f}',
-                'correct': correct
-            })
         
-        # 評価指標を計算
-        print("\nCalculating metrics...")
-        metrics = calculate_metrics(y_true, y_pred, CLASS_NAMES)
+        if problem_type == 'regression':
+            # 回帰問題の処理
+            y_pred_values = predictions.flatten()  # 連続値
+            
+            for i, (filename, true_label) in enumerate(zip(file_list, label_list)):
+                pred_value = float(y_pred_values[i])
+                true_value = float(true_label)
+                error = abs(pred_value - true_value)
+                correct = error <= tolerance  # 許容範囲内なら正解
+                
+                file_predictions.append({
+                    'filename': filename,
+                    'true_label': f'{true_value:.4f}',
+                    'predicted_label': f'{pred_value:.4f}',
+                    'confidence': f'{1.0 - min(error / (tolerance + 1e-8), 1.0):.4f}',  # 信頼度（誤差が小さいほど高い）
+                    'correct': correct
+                })
+            
+            # 回帰の評価指標
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+            mae = mean_absolute_error([float(l) for l in label_list], y_pred_values)
+            mse = mean_squared_error([float(l) for l in label_list], y_pred_values)
+            rmse = np.sqrt(mse)
+            r2 = r2_score([float(l) for l in label_list], y_pred_values)
+            within_tolerance = np.mean([fp['correct'] for fp in file_predictions])
+            
+            metrics = {
+                'accuracy': float(within_tolerance),  # 許容範囲内の割合
+                'mae': float(mae),
+                'mse': float(mse),
+                'rmse': float(rmse),
+                'r2_score': float(r2),
+                'tolerance': float(tolerance),
+                'problem_type': 'regression',
+                'class_metrics': []  # 回帰では不要
+            }
+        else:
+            # 分類問題の処理
+            y_pred = np.argmax(predictions, axis=1)
+            
+            for i, (filename, true_label, pred_idx) in enumerate(zip(file_list, label_list, y_pred)):
+                pred_label = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else f'Class_{pred_idx}'
+                confidence = float(np.max(predictions[i]))
+                
+                # 許容範囲を考慮した正解判定（数値クラスの場合）
+                if tolerance > 0:
+                    try:
+                        true_value = float(true_label)
+                        pred_value = float(CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else pred_idx)
+                        correct = abs(true_value - pred_value) <= tolerance
+                    except (ValueError, IndexError):
+                        correct = (y_true[i] == pred_idx)  # 数値でない場合は完全一致
+                else:
+                    correct = (y_true[i] == pred_idx)
+                
+                file_predictions.append({
+                    'filename': filename,
+                    'true_label': true_label,
+                    'predicted_label': pred_label,
+                    'confidence': f'{confidence:.4f}',
+                    'correct': correct
+                })
+            
+            # 分類の評価指標を計算
+            print("\nCalculating metrics...")
+            metrics = calculate_metrics(y_true, y_pred, CLASS_NAMES)
+            metrics['tolerance'] = float(tolerance)
+            metrics['problem_type'] = 'classification'
+            
+            # 許容範囲を考慮した精度
+            if tolerance > 0:
+                accuracy_with_tolerance = np.mean([fp['correct'] for fp in file_predictions])
+                metrics['accuracy_with_tolerance'] = float(accuracy_with_tolerance)
         
         # 結果を保存
         print("\nSaving results...")

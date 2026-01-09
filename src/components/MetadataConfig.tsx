@@ -19,6 +19,10 @@ interface MetadataConfigProps {
   onTargetConfigChange: (config: TargetFieldConfig | null) => void;
   auxiliaryFields: AuxiliaryFieldConfig[];
   onAuxiliaryFieldsChange: (fields: AuxiliaryFieldConfig[]) => void;
+  problemType: 'classification' | 'regression';
+  onProblemTypeChange: (type: 'classification' | 'regression') => void;
+  tolerance?: number; // 回帰/分類の許容範囲
+  onToleranceChange?: (tolerance: number) => void;
 }
 
 // ユーザーがカスタム範囲を設定できるようにするためのデフォルト値
@@ -35,6 +39,10 @@ export function MetadataConfig({
   onTargetConfigChange,
   auxiliaryFields,
   onAuxiliaryFieldsChange,
+  problemType,
+  onProblemTypeChange,
+  tolerance = 0,
+  onToleranceChange,
 }: MetadataConfigProps) {
   const [expandedField, setExpandedField] = useState<number | null>(null);
 
@@ -332,12 +340,68 @@ export function MetadataConfig({
         </div>
       </div>
 
+      {/* 問題タイプ選択 */}
+      <div className="mb-4 p-4 bg-zinc-900/50 rounded-lg border border-zinc-700">
+        <div className="text-sm font-medium text-white mb-3">問題タイプ</div>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => onProblemTypeChange('classification')}
+            className={`p-3 rounded-lg border transition-all ${
+              problemType === 'classification'
+                ? 'bg-violet-500/20 border-violet-500 ring-2 ring-violet-500/50'
+                : 'bg-zinc-800 border-zinc-700 hover:border-zinc-600'
+            }`}
+          >
+            <div className="text-sm font-medium text-white">分類問題</div>
+            <div className="text-xs text-zinc-400 mt-1">
+              離散的なクラスを予測（例: A, B, C）
+            </div>
+          </button>
+          <button
+            onClick={() => onProblemTypeChange('regression')}
+            className={`p-3 rounded-lg border transition-all ${
+              problemType === 'regression'
+                ? 'bg-emerald-500/20 border-emerald-500 ring-2 ring-emerald-500/50'
+                : 'bg-zinc-800 border-zinc-700 hover:border-zinc-600'
+            }`}
+          >
+            <div className="text-sm font-medium text-white">回帰問題</div>
+            <div className="text-xs text-zinc-400 mt-1">
+              連続値を予測（例: 温度、圧力）
+            </div>
+          </button>
+        </div>
+        
+        {/* 許容範囲設定（回帰または数値分類の場合） */}
+        {targetConfig && targetConfig.groupingMode === 'individual' && onToleranceChange && (
+          <div className="mt-3 pt-3 border-t border-zinc-700">
+            <label className="text-xs text-zinc-400 block mb-2">
+              {problemType === 'regression' ? '許容誤差範囲' : '分類の許容範囲'} (±)
+            </label>
+            <input
+              type="number"
+              value={tolerance}
+              onChange={(e) => onToleranceChange(parseFloat(e.target.value) || 0)}
+              min="0"
+              step="0.1"
+              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              {problemType === 'regression' 
+                ? '予測値が正解値±この範囲内なら正解とみなす'
+                : '数値クラスの予測が正解±この範囲内なら正解とみなす'
+              }
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* 使い方の説明 */}
       <div className="mb-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-700">
         <div className="text-xs text-zinc-400 space-y-1">
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 bg-violet-500 text-white rounded text-xs">ターゲット</span>
-            <span>= 予測したい値（分類対象）</span>
+            <span>= 予測したい値（{problemType === 'classification' ? '分類対象' : '回帰対象'}）</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 bg-cyan-500 text-white rounded text-xs">補助</span>

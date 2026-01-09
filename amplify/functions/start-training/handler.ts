@@ -27,6 +27,8 @@ interface TrainingConfig {
   targetField: string;
   auxiliaryFields: string[];
   fieldLabels?: FieldLabel[]; // フィールドラベル情報
+  problemType?: 'classification' | 'regression'; // 問題タイプ
+  tolerance?: number; // 許容範囲
   classNames: string[];
   inputHeight: number;
   inputWidth: number;
@@ -101,6 +103,8 @@ export const handler: Handler = async (event) => {
       'target_field': config.targetField,
       'auxiliary_fields': JSON.stringify(config.auxiliaryFields || []),
       'field_labels': JSON.stringify(config.fieldLabels || []), // フィールドラベル情報を追加
+      'problem_type': config.problemType || 'classification', // 問題タイプを追加
+      'tolerance': String(config.tolerance || 0), // 許容範囲を追加
       'class_names': JSON.stringify(config.classNames),
     };
 

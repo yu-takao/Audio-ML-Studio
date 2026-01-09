@@ -43,6 +43,8 @@ interface CloudTrainingProps {
   targetField: string;
   auxiliaryFields: string[];
   fieldLabels: FieldLabel[]; // フィールドラベル情報
+  problemType: 'classification' | 'regression'; // 問題タイプ
+  tolerance: number; // 許容範囲
   fileInfoList: { file: File; path: string; folderName: string }[];
   s3DatasetPath?: string; // S3から選択した場合のパス
   onModelReady: (modelPath: string) => void;
@@ -120,6 +122,8 @@ export function CloudTraining({
   targetField,
   auxiliaryFields,
   fieldLabels,
+  problemType,
+  tolerance,
   fileInfoList,
   s3DatasetPath,
   onModelReady,
@@ -495,6 +499,8 @@ export function CloudTraining({
             targetField,
             auxiliaryFields,
             fieldLabels, // フィールドラベル情報を追加
+            problemType, // 問題タイプを追加
+            tolerance, // 許容範囲を追加
             classNames: datasetInfo?.classes || [],
             inputHeight: 128,
             inputWidth: 128,
@@ -522,7 +528,7 @@ export function CloudTraining({
     } finally {
       setIsStartingTraining(false);
     }
-  }, [uploadedPath, datasetInfo, config, targetField, auxiliaryFields, fieldLabels, START_TRAINING_URL, userId, onTrainingStart]);
+  }, [uploadedPath, datasetInfo, config, targetField, auxiliaryFields, fieldLabels, problemType, tolerance, START_TRAINING_URL, userId, onTrainingStart]);
 
   /**
    * 訓練ステータスをポーリング
