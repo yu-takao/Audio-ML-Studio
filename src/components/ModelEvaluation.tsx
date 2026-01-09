@@ -247,12 +247,12 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
         classNames.add(label);
       }
 
-      // 3. SageMaker評価ジョブを開始
+      // 3. SageMaker評価ジョブを開始（Identity IDを使用）
       const response = await fetch(startEvaluationUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
+          userId: identityId, // Identity IDを使用（S3アクセス制御と一致）
           config: {
             dataPath,
             modelPath: selectedModel.path,
