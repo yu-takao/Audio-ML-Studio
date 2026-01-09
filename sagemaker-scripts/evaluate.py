@@ -113,6 +113,18 @@ def load_tfjs_model(model_dir: str) -> tf.keras.Model:
     print(f"Loading model from: {model_dir_path}")
     print(f"Model JSON path: {model_json_path}")
     
+    # model.tar.gzが存在する場合は展開
+    model_tar_path = model_dir_path / 'model.tar.gz'
+    if model_tar_path.exists() and not model_json_path.exists():
+        print(f"Found model.tar.gz, extracting...")
+        import tarfile
+        with tarfile.open(model_tar_path, 'r:gz') as tar:
+            tar.extractall(path=model_dir_path)
+        print(f"Extraction complete. Files in directory:")
+        for f in model_dir_path.rglob('*'):
+            if f.is_file():
+                print(f"  - {f}")
+    
     if not model_json_path.exists():
         # ディレクトリ内のファイル一覧を表示
         print(f"Files in model directory:")
