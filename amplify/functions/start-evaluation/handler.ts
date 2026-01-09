@@ -3,13 +3,13 @@ import { SageMakerClient, CreateProcessingJobCommand } from '@aws-sdk/client-sag
 
 const sagemakerClient = new SageMakerClient({});
 
-// AWS提供のScikit-learn Processingイメージ（リージョン別）
-// numpy, scipy, scikit-learnがプリインストール済み
+// AWS提供のTensorFlow Trainingイメージ（リージョン別）
+// TensorFlow, numpy, scipy, scikit-learn がすべて互換性検証済みでプリインストール
 const PROCESSING_IMAGES: Record<string, string> = {
-  'ap-northeast-1': '354813040037.dkr.ecr.ap-northeast-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-  'us-east-1': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-  'us-west-2': '246618743249.dkr.ecr.us-west-2.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-  'eu-west-1': '141502667606.dkr.ecr.eu-west-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+  'ap-northeast-1': '763104351884.dkr.ecr.ap-northeast-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
+  'us-east-1': '763104351884.dkr.ecr.us-east-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
+  'us-west-2': '763104351884.dkr.ecr.us-west-2.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
+  'eu-west-1': '763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker',
 };
 
 interface EvaluationConfig {
@@ -33,6 +33,7 @@ const responseHeaders = {
 };
 
 export const handler: Handler = async (event) => {
+  console.log('=== START EVALUATION HANDLER v2 ===');
   console.log('Event:', JSON.stringify(event, null, 2));
   console.log('Start evaluation job request');
 
@@ -46,6 +47,8 @@ export const handler: Handler = async (event) => {
       targetFieldType: typeof config?.targetField,
       auxiliaryFields: config?.auxiliaryFields,
       auxiliaryFieldsTypes: config?.auxiliaryFields?.map(f => typeof f),
+      inputHeight: config?.inputHeight,
+      inputWidth: config?.inputWidth,
     });
 
     if (!config || !userId) {
@@ -53,6 +56,15 @@ export const handler: Handler = async (event) => {
         statusCode: 400,
         headers: responseHeaders,
         body: JSON.stringify({ error: 'Missing config or userId' }),
+      };
+    }
+
+    // targetFieldの検証とデフォルト値
+    if (config.targetField === undefined || config.targetField === null) {
+      return {
+        statusCode: 400,
+        headers: responseHeaders,
+        body: JSON.stringify({ error: 'targetField is required' }),
       };
     }
 
@@ -75,19 +87,48 @@ export const handler: Handler = async (event) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const processingJobName = jobName || `audio-eval-${userId.slice(0, 8)}-${timestamp}`;
 
-    // 環境変数を文字列として準備
+    // 環境変数を文字列として準備（すべての値を明示的に文字列に変換）
+    // SageMakerは環境変数を文字列としてのみ受け付けるため、数値も文字列に変換する必要がある
+    const targetFieldValue = config.targetField !== undefined && config.targetField !== null 
+      ? String(config.targetField) 
+      : '0';
+    
+    const auxiliaryFieldsValue = Array.isArray(config.auxiliaryFields)
+      ? JSON.stringify(config.auxiliaryFields.map(f => String(f !== undefined && f !== null ? f : '')))
+      : JSON.stringify([]);
+    
+    const classNamesValue = Array.isArray(config.classNames)
+      ? JSON.stringify(config.classNames.map(c => String(c || '')))
+      : JSON.stringify([]);
+    
+    const inputHeightValue = config.inputHeight !== undefined && config.inputHeight !== null
+      ? String(config.inputHeight)
+      : '128';
+    
+    const inputWidthValue = config.inputWidth !== undefined && config.inputWidth !== null
+      ? String(config.inputWidth)
+      : '128';
+
+    // すべての環境変数を確実に文字列に変換（型安全性のため）
     const environmentVars: Record<string, string> = {
-      BUCKET_NAME: String(bucket),
-      USER_ID: String(userId),
-      JOB_NAME: String(processingJobName),
-      TARGET_FIELD: String(config.targetField),
-      AUXILIARY_FIELDS: JSON.stringify((config.auxiliaryFields || []).map(String)),
-      CLASS_NAMES: JSON.stringify(config.classNames.map(String)),
-      INPUT_HEIGHT: String(config.inputHeight || 128),
-      INPUT_WIDTH: String(config.inputWidth || 128),
+      BUCKET_NAME: String(bucket || ''),
+      USER_ID: String(userId || ''),
+      JOB_NAME: String(processingJobName || ''),
+      TARGET_FIELD: String(targetFieldValue),
+      AUXILIARY_FIELDS: String(auxiliaryFieldsValue),
+      CLASS_NAMES: String(classNamesValue),
+      INPUT_HEIGHT: String(inputHeightValue),
+      INPUT_WIDTH: String(inputWidthValue),
     };
 
-    console.log('Environment variables:', environmentVars);
+    // デバッグ: すべての値が文字列であることを確認
+    console.log('Environment variables (before SageMaker):', JSON.stringify(environmentVars, null, 2));
+    console.log('Environment variables types:', Object.entries(environmentVars).map(([k, v]) => ({
+      key: k,
+      value: v,
+      type: typeof v,
+      isString: typeof v === 'string',
+    })));
 
     // SageMaker Processing Jobの設定
     const command = new CreateProcessingJobCommand({
@@ -152,7 +193,8 @@ export const handler: Handler = async (event) => {
       StoppingCondition: {
         MaxRuntimeInSeconds: 3600, // 1時間
       },
-      Environment: environmentVars,
+      // 環境変数を確実に文字列型として渡す（SageMakerの要件）
+      Environment: environmentVars as Record<string, string>,
       Tags: [
         { Key: 'Application', Value: 'AudioMLStudio' },
         { Key: 'JobType', Value: 'Evaluation' },

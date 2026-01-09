@@ -199,6 +199,11 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       return;
     }
 
+    if (targetConfig.fieldIndex === undefined || targetConfig.fieldIndex === null) {
+      setError('ターゲットフィールドが設定されていません');
+      return;
+    }
+
     if (!startEvaluationUrl) {
       setError('評価機能のエンドポイントが設定されていません');
       return;

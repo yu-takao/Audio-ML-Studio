@@ -6,27 +6,10 @@ SageMaker Processing Script for Model Evaluation
 使用方法:
 - S3にアップロードして SageMaker Processing Job で実行
 - TFJSモデルを読み込み、テストデータで評価
+
+使用イメージ: tensorflow-training:2.13.0-cpu-py310-ubuntu20.04-sagemaker
+（TensorFlow, numpy, scipy, scikit-learn がプリインストール済み）
 """
-
-# 必要なパッケージをインストール（SageMaker Processing環境用）
-import subprocess
-import sys
-
-def install_packages():
-    """必要なパッケージをインストール"""
-    # scikit-learn Processing イメージには numpy, scipy, scikit-learn がプリインストール済み
-    # TensorFlow のみをインストール
-    packages = ['tensorflow']
-    for package in packages:
-        print(f"Installing {package}...")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q', '--no-cache-dir', package])
-    print("All packages installed successfully!")
-
-# パッケージをインストール
-print("=" * 60)
-print("Setting up environment...")
-print("=" * 60)
-install_packages()
 
 import os
 import json
@@ -35,6 +18,12 @@ import tensorflow as tf
 from pathlib import Path
 from typing import Dict, List, Tuple
 import csv
+
+print("=" * 60)
+print("Environment initialized successfully!")
+print(f"TensorFlow version: {tf.__version__}")
+print(f"NumPy version: {np.__version__}")
+print("=" * 60)
 
 # SageMaker環境変数
 INPUT_DATA_DIR = '/opt/ml/processing/input/data'
