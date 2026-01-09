@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
     parser.add_argument('--auxiliary_fields', type=str, default='[]')
+    parser.add_argument('--field_labels', type=str, default='[]')  # フィールドラベル情報
     parser.add_argument('--class_names', type=str, default='[]')
     
     # SageMaker 環境変数
@@ -253,12 +254,14 @@ def main():
     os.system('pip install librosa soundfile --quiet')
     
     auxiliary_fields = json.loads(args.auxiliary_fields)
+    field_labels = json.loads(args.field_labels)  # フィールドラベル情報
     class_names = json.loads(args.class_names)
     target_field = int(args.target_field)
     
     print(f"Class names: {class_names}")
     print(f"Target field: {target_field}")
     print(f"Auxiliary fields: {auxiliary_fields}")
+    print(f"Field labels: {field_labels}")
     
     X, X_aux, y = load_dataset(args, class_names, target_field, auxiliary_fields)
     
@@ -358,6 +361,7 @@ def main():
         'class_names': class_names,
         'target_field': target_field,
         'auxiliary_fields': auxiliary_fields,
+        'field_labels': field_labels,  # フィールドラベル情報を保存
         'input_height': args.input_height,
         'input_width': args.input_width,
         'test_accuracy': float(test_acc),

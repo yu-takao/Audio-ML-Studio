@@ -21,24 +21,11 @@ interface MetadataConfigProps {
   onAuxiliaryFieldsChange: (fields: AuxiliaryFieldConfig[]) => void;
 }
 
-const PRESET_LABELS = [
-  '目標空気圧 (kPa)',
-  '実測空気圧 (kPa)',
-  'タイヤサイズ',
-  'サンプル番号',
-  'タイヤ幅 (mm)',
-  '偏平率 (%)',
-  'インチ',
-  '処理タイプ',
-  '拡張タイプ',
-  '拡張番号',
-  'その他',
-];
-
-const PRESSURE_RANGES = [
-  { min: 0, max: 200, label: '低圧 (<200kPa)' },
-  { min: 200, max: 240, label: '正常 (200-240kPa)' },
-  { min: 240, max: 999, label: '高圧 (>240kPa)' },
+// ユーザーがカスタム範囲を設定できるようにするためのデフォルト値
+const DEFAULT_RANGES = [
+  { min: 0, max: 100, label: '範囲1' },
+  { min: 100, max: 200, label: '範囲2' },
+  { min: 200, max: 999, label: '範囲3' },
 ];
 
 export function MetadataConfig({
@@ -98,7 +85,7 @@ export function MetadataConfig({
     onTargetConfigChange({
       ...targetConfig,
       groupingMode: mode,
-      ranges: mode === 'range' ? PRESSURE_RANGES : undefined,
+      ranges: mode === 'range' ? DEFAULT_RANGES : undefined,
     });
   };
 
@@ -210,26 +197,19 @@ export function MetadataConfig({
         {/* 展開コンテンツ */}
         {isExpanded && (
           <div className="px-3 pb-3 border-t border-zinc-800 pt-3">
-            {/* プリセットラベル */}
+            {/* ラベル名入力 */}
             <div className="mb-3">
-              <label className="text-xs text-zinc-500 mb-1 block">プリセットラベル</label>
-              <div className="flex flex-wrap gap-1">
-                {PRESET_LABELS.map((label) => (
-                  <button
-                    key={label}
-                    onClick={() => onFieldLabelChange(field.index, label)}
-                    className={`
-                      px-2 py-1 rounded text-xs transition-all
-                      ${field.label === label
-                        ? 'bg-violet-500 text-white'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                      }
-                    `}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <label className="text-xs text-zinc-500 mb-1 block">フィールド名を入力</label>
+              <input
+                type="text"
+                value={field.label}
+                onChange={(e) => onFieldLabelChange(field.index, e.target.value)}
+                placeholder="例: 空気圧、サイズ、温度など"
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              />
+              <p className="text-xs text-zinc-500 mt-1">
+                このフィールドが何を表すか、わかりやすい名前をつけてください
+              </p>
             </div>
 
             {/* 値のプレビュー */}
@@ -291,10 +271,10 @@ export function MetadataConfig({
                 </div>
 
                 {/* 範囲設定 */}
-                {targetConfig?.groupingMode === 'range' && (
+                {targetConfig?.groupingMode === 'range' && targetConfig.ranges && (
                   <div className="space-y-2">
                     <div className="text-xs text-zinc-400">範囲設定:</div>
-                    {PRESSURE_RANGES.map((range, i) => (
+                    {targetConfig.ranges.map((range, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className="text-zinc-500">{range.min}-{range.max}:</span>
                         <span className="text-white">{range.label}</span>
@@ -307,7 +287,9 @@ export function MetadataConfig({
                 <div className="mt-2 text-xs text-zinc-400">
                   生成されるクラス数:{' '}
                   <span className="text-violet-300 font-medium">
-                    {targetConfig?.groupingMode === 'range' ? PRESSURE_RANGES.length : field.valueCount}
+                    {targetConfig?.groupingMode === 'range' && targetConfig.ranges 
+                      ? targetConfig.ranges.length 
+                      : field.valueCount}
                   </span>
                 </div>
               </div>

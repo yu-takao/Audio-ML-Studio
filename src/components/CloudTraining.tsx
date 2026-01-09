@@ -22,6 +22,11 @@ import {
   Award,
 } from 'lucide-react';
 
+interface FieldLabel {
+  index: number;
+  label: string;
+}
+
 interface CloudTrainingProps {
   userId: string; // Cognito認証ユーザーID
   config: {
@@ -37,6 +42,7 @@ interface CloudTrainingProps {
   } | null;
   targetField: string;
   auxiliaryFields: string[];
+  fieldLabels: FieldLabel[]; // フィールドラベル情報
   fileInfoList: { file: File; path: string; folderName: string }[];
   s3DatasetPath?: string; // S3から選択した場合のパス
   onModelReady: (modelPath: string) => void;
@@ -113,6 +119,7 @@ export function CloudTraining({
   datasetInfo,
   targetField,
   auxiliaryFields,
+  fieldLabels,
   fileInfoList,
   s3DatasetPath,
   onModelReady,
@@ -487,6 +494,7 @@ export function CloudTraining({
             dataPath: uploadedPath,
             targetField,
             auxiliaryFields,
+            fieldLabels, // フィールドラベル情報を追加
             classNames: datasetInfo?.classes || [],
             inputHeight: 128,
             inputWidth: 128,
@@ -514,7 +522,7 @@ export function CloudTraining({
     } finally {
       setIsStartingTraining(false);
     }
-  }, [uploadedPath, datasetInfo, config, targetField, auxiliaryFields, START_TRAINING_URL, userId, onTrainingStart]);
+  }, [uploadedPath, datasetInfo, config, targetField, auxiliaryFields, fieldLabels, START_TRAINING_URL, userId, onTrainingStart]);
 
   /**
    * 訓練ステータスをポーリング

@@ -1288,6 +1288,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
             datasetInfo={datasetInfo}
             targetField={targetConfig?.fieldIndex?.toString() || '0'}
             auxiliaryFields={auxiliaryFields.map(f => f.fieldIndex.toString())}
+            fieldLabels={metadata?.fields.map(f => ({ index: f.index, label: f.label })) || []}
             fileInfoList={finalFileInfoList}
             s3DatasetPath={dataSource === 's3' ? selectedS3Dataset?.path : undefined}
             onModelReady={(modelPath) => {

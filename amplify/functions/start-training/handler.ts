@@ -12,6 +12,11 @@ const TENSORFLOW_IMAGES: Record<string, string> = {
   'eu-west-1': '763104351884.dkr.ecr.eu-west-1.amazonaws.com/tensorflow-training:2.13.0-gpu-py310-cu118-ubuntu20.04-sagemaker',
 };
 
+interface FieldLabel {
+  index: number;
+  label: string;
+}
+
 interface TrainingConfig {
   epochs: number;
   batchSize: number;
@@ -21,6 +26,7 @@ interface TrainingConfig {
   dataPath: string;
   targetField: string;
   auxiliaryFields: string[];
+  fieldLabels?: FieldLabel[]; // フィールドラベル情報
   classNames: string[];
   inputHeight: number;
   inputWidth: number;
@@ -94,6 +100,7 @@ export const handler: Handler = async (event) => {
       'input_width': String(config.inputWidth || 128),
       'target_field': config.targetField,
       'auxiliary_fields': JSON.stringify(config.auxiliaryFields || []),
+      'field_labels': JSON.stringify(config.fieldLabels || []), // フィールドラベル情報を追加
       'class_names': JSON.stringify(config.classNames),
     };
 

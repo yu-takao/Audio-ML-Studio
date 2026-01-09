@@ -21,20 +21,8 @@ export interface ParsedMetadata {
   rawExamples: string[];
 }
 
-// デフォルトのフィールド名候補
-const DEFAULT_FIELD_LABELS: { [key: string]: string } = {
-  '0': '目標空気圧 (kPa)',
-  '1': '実測空気圧 (kPa)',
-  '2': 'サイズ',
-  '3': 'パラメータ1',
-  '4': 'タイヤ幅 (mm)',
-  '5': '偏平率 (%)',
-  '6': 'インチ',
-  '7': 'サンプル番号',
-  '8': '処理タイプ',
-  '9': '拡張タイプ',
-  '10': '拡張番号',
-};
+// デフォルトのフィールド名（汎用的な名前、ユーザーが変更可能）
+// 特定のドメイン知識を前提としない汎用的な名前を使用
 
 /**
  * 値が数値かどうかを判定
@@ -98,7 +86,7 @@ export function analyzeFilenames(
     fields.push({
       index: i,
       name: `field_${i}`,
-      label: DEFAULT_FIELD_LABELS[String(i)] || `フィールド ${i + 1}`,
+      label: `フィールド ${i + 1}`,  // ユーザーが変更可能な汎用的な名前
       uniqueValues,
       valueCount: uniqueValues.length,
       isNumeric,

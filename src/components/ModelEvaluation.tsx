@@ -30,6 +30,12 @@ interface ModelEvaluationProps {
   userId: string;
 }
 
+// フィールドラベル情報
+interface FieldLabel {
+  index: number;
+  label: string;
+}
+
 // 保存されているモデル情報
 interface SavedModel {
   path: string;
@@ -38,6 +44,7 @@ interface SavedModel {
   classes?: string[];
   targetField?: string;
   auxiliaryFields?: AuxiliaryFieldConfig[];
+  fieldLabels?: FieldLabel[]; // フィールドラベル情報
 }
 
 // 評価ジョブのステータス
@@ -142,6 +149,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               classes: metadata.classes || [],
               targetField: metadata.target_field,
               auxiliaryFields: metadata.auxiliary_fields || [],
+              fieldLabels: metadata.field_labels || [], // フィールドラベル情報
             });
           } catch (err) {
             // メタデータがない場合もモデルは表示
@@ -169,14 +177,38 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     loadSavedModels();
   }, [loadSavedModels]);
 
-  // データ選択時にメタデータを解析
+  // データ選択時にメタデータを解析し、選択したモデルのフィールドラベルを適用
   useEffect(() => {
     if (wavFiles.length > 0) {
       const filenames = wavFiles.map(f => f.name);
       const analyzed = analyzeFilenames(filenames, undefined, '_');
+      
+      // 選択したモデルのフィールドラベルを適用
+      if (selectedModel?.fieldLabels && selectedModel.fieldLabels.length > 0) {
+        const updatedFields = analyzed.fields.map(field => {
+          const savedLabel = selectedModel.fieldLabels?.find(fl => fl.index === field.index);
+          return savedLabel ? { ...field, label: savedLabel.label } : field;
+        });
+        analyzed.fields = updatedFields;
+      }
+      
       setMetadata(analyzed);
+      
+      // 選択したモデルのターゲットフィールドを自動選択
+      if (selectedModel?.targetField !== undefined) {
+        const targetIndex = parseInt(selectedModel.targetField, 10);
+        const targetField = analyzed.fields.find(f => f.index === targetIndex);
+        if (targetField) {
+          setTargetConfig({
+            fieldIndex: targetIndex,
+            fieldName: targetField.label,
+            useAsTarget: true,
+            groupingMode: 'individual',
+          });
+        }
+      }
     }
-  }, [wavFiles]);
+  }, [wavFiles, selectedModel]);
 
   // モデルを選択
   const handleSelectModel = (model: SavedModel) => {
