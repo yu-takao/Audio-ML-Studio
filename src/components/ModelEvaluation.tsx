@@ -337,24 +337,29 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       let metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
       console.log('After bucket removal:', metricsPath);
       
-      // Amplify Storageは evaluation/results/{entity_id}/* にアクセスする際、
-      // 自動的に現在のIdentity IDを挿入するため、パスからIdentity ID部分を除去してジョブ名だけを残す
-      // evaluation/results/identity-id/job-name/ → evaluation/results/job-name/
+      // Identity ID部分を除去してジョブ名だけを残す
+      // evaluation/results/identity-id/job-name/ → job-name/
       const match = metricsPath.match(/^evaluation\/results\/[^/]+\/(.+)$/);
-      if (match) {
-        metricsPath = `evaluation/results/${match[1]}`;
+      if (!match) {
+        throw new Error(`Invalid output path format: ${outputPath}`);
       }
-      console.log('Final metricsPath:', metricsPath);
-      console.log('Full metrics file path:', `${metricsPath}metrics.json`);
+      const jobPath = match[1]; // audio-eval-ap-north-2026-01-09T10-13-10-279Z/
+      console.log('Job path:', jobPath);
+      console.log('Full metrics file path:', `evaluation/results/{identityId}/${jobPath}metrics.json`);
       
-      const metricsFile = await downloadData({ path: `${metricsPath}metrics.json` }).result;
+      // Amplify Storageのpath関数を使用してIdentity IDを明示的に解決
+      const metricsFile = await downloadData({ 
+        path: ({ identityId }) => `evaluation/results/${identityId}/${jobPath}metrics.json`
+      }).result;
       const metricsText = await metricsFile.body.text();
       const metrics = JSON.parse(metricsText);
       setEvaluationMetrics(metrics);
 
       // predictions.csvを読み込む
       try {
-        const predictionsFile = await downloadData({ path: `${metricsPath}predictions.csv` }).result;
+        const predictionsFile = await downloadData({ 
+          path: ({ identityId }) => `evaluation/results/${identityId}/${jobPath}predictions.csv`
+        }).result;
         const predictionsText = await predictionsFile.body.text();
         const lines = predictionsText.split('\n').filter(l => l.trim());
         
