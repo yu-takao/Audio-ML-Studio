@@ -330,8 +330,13 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
   // 評価結果を読み込む
   const loadEvaluationResults = async (outputPath: string) => {
     try {
+      console.log('Loading results from outputPath:', outputPath);
+      
       // metrics.jsonを読み込む
       const metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
+      console.log('Transformed metricsPath:', metricsPath);
+      console.log('Full metrics file path:', `${metricsPath}/metrics.json`);
+      
       const metricsFile = await downloadData({ path: `${metricsPath}/metrics.json` }).result;
       const metricsText = await metricsFile.body.text();
       const metrics = JSON.parse(metricsText);
