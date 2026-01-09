@@ -330,6 +330,20 @@ def main():
         except:
             print("Model summary not available")
         
+        # label_encoder.jsonからクラス名を読み込み（訓練時のクラス名を使用）
+        label_encoder_path = Path(INPUT_MODEL_DIR) / 'label_encoder.json'
+        if label_encoder_path.exists():
+            print(f"\nLoading label encoder from: {label_encoder_path}")
+            with open(label_encoder_path, 'r') as f:
+                label_encoder = json.load(f)
+                # 訓練時のクラス名で上書き（重要：これにより正しいクラス数とクラス名を使用）
+                global CLASS_NAMES
+                CLASS_NAMES = label_encoder.get('classes', CLASS_NAMES)
+                print(f"Loaded {len(CLASS_NAMES)} classes from label encoder: {CLASS_NAMES}")
+        else:
+            print(f"\nWarning: label_encoder.json not found at {label_encoder_path}")
+            print(f"Using CLASS_NAMES from environment: {CLASS_NAMES}")
+        
         # データセットを準備
         print("\nPreparing dataset...")
         X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR)
