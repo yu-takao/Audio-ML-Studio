@@ -315,39 +315,39 @@ def main():
             model.summary()
         except:
             print("Model summary not available")
-    
-    # データセットを準備
-    print("\nPreparing dataset...")
-    X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR)
-    
-    # 予測
-    print("\nRunning inference...")
-    predictions = model.predict(X, batch_size=32, verbose=1)
-    y_pred = np.argmax(predictions, axis=1)
-    
-    # ファイル別の予測結果
-    file_predictions = []
-    for i, (filename, true_label, pred_idx) in enumerate(zip(file_list, label_list, y_pred)):
-        pred_label = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else f'Class_{pred_idx}'
-        confidence = float(np.max(predictions[i]))
-        correct = (y_true[i] == pred_idx)
         
-        file_predictions.append({
-            'filename': filename,
-            'true_label': true_label,
-            'predicted_label': pred_label,
-            'confidence': f'{confidence:.4f}',
-            'correct': correct
-        })
-    
-    # 評価指標を計算
-    print("\nCalculating metrics...")
-    metrics = calculate_metrics(y_true, y_pred, CLASS_NAMES)
-    
-    # 結果を保存
-    print("\nSaving results...")
-    save_results(metrics, file_predictions, OUTPUT_DIR)
-    
+        # データセットを準備
+        print("\nPreparing dataset...")
+        X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR)
+        
+        # 予測
+        print("\nRunning inference...")
+        predictions = model.predict(X, batch_size=32, verbose=1)
+        y_pred = np.argmax(predictions, axis=1)
+        
+        # ファイル別の予測結果
+        file_predictions = []
+        for i, (filename, true_label, pred_idx) in enumerate(zip(file_list, label_list, y_pred)):
+            pred_label = CLASS_NAMES[pred_idx] if pred_idx < len(CLASS_NAMES) else f'Class_{pred_idx}'
+            confidence = float(np.max(predictions[i]))
+            correct = (y_true[i] == pred_idx)
+            
+            file_predictions.append({
+                'filename': filename,
+                'true_label': true_label,
+                'predicted_label': pred_label,
+                'confidence': f'{confidence:.4f}',
+                'correct': correct
+            })
+        
+        # 評価指標を計算
+        print("\nCalculating metrics...")
+        metrics = calculate_metrics(y_true, y_pred, CLASS_NAMES)
+        
+        # 結果を保存
+        print("\nSaving results...")
+        save_results(metrics, file_predictions, OUTPUT_DIR)
+        
         print("\n" + "=" * 60)
         print("Evaluation completed successfully!")
         print("=" * 60)
