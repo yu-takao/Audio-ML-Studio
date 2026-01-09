@@ -106,66 +106,59 @@ def generate_class_label(metadata: Dict[str, str], target_field: str, aux_fields
 
 
 def load_tfjs_model(model_dir: str) -> tf.keras.Model:
-    """TFJSモデルをロード"""
+    """モデルをロード（SavedModel形式またはTFJS形式）"""
     model_dir_path = Path(model_dir)
-    model_json_path = model_dir_path / 'model.json'
     
     print(f"Loading model from: {model_dir_path}")
-    print(f"Model JSON path: {model_json_path}")
     
     # model.tar.gzが存在する場合は展開
     model_tar_path = model_dir_path / 'model.tar.gz'
-    if model_tar_path.exists() and not model_json_path.exists():
+    if model_tar_path.exists():
         print(f"Found model.tar.gz, extracting...")
         import tarfile
         with tarfile.open(model_tar_path, 'r:gz') as tar:
             tar.extractall(path=model_dir_path)
-        print(f"Extraction complete. Files in directory:")
-        for f in model_dir_path.rglob('*'):
-            if f.is_file():
-                print(f"  - {f}")
+        print(f"Extraction complete.")
     
-    if not model_json_path.exists():
-        # ディレクトリ内のファイル一覧を表示
-        print(f"Files in model directory:")
-        for f in model_dir_path.rglob('*'):
+    # ディレクトリ内のファイル一覧を表示
+    print(f"Files in model directory:")
+    for f in model_dir_path.rglob('*'):
+        if f.is_file():
             print(f"  - {f}")
-        raise FileNotFoundError(f"Model not found at {model_json_path}")
     
-    # TFJSモデルを読み込み（converter経由）
-    try:
-        import tensorflowjs as tfjs
-        print("Loading model with tensorflowjs...")
-        model = tfjs.converters.load_keras_model(str(model_dir_path))
-        print(f"Model loaded successfully: {type(model)}")
-        return model
-    except ImportError as e:
-        print(f"Warning: tensorflowjs not available: {e}")
-        raise ImportError("tensorflowjs is required for model loading. Please install it.")
-    except Exception as e:
-        print(f"Error loading model with tensorflowjs: {e}")
-        print("Attempting alternative loading method...")
-        
-        # 代替方法：TFJS形式から直接読み込み
+    # 方法1: TensorFlow SavedModel形式を探す（audio_classifier/saved_model.pb）
+    saved_model_dirs = list(model_dir_path.glob('*/saved_model.pb'))
+    if saved_model_dirs:
+        saved_model_dir = saved_model_dirs[0].parent
+        print(f"Found TensorFlow SavedModel at: {saved_model_dir}")
         try:
-            with open(model_json_path, 'r') as f:
-                model_config = json.load(f)
-            
-            # モデル構造を復元
-            if 'modelTopology' in model_config:
-                model = tf.keras.models.model_from_json(json.dumps(model_config['modelTopology']))
-                # 重みファイルを探して読み込み
-                weights_files = list(model_dir_path.glob('*.bin'))
-                if weights_files:
-                    print(f"Found weights file: {weights_files[0]}")
-                    # 注意: TFJSの重み形式は特殊なので、完全な読み込みは困難
-                    print("Warning: Weight loading may not work correctly without tensorflowjs")
-                return model
-            else:
-                raise ValueError("Invalid model format: 'modelTopology' not found")
-        except Exception as e2:
-            print(f"Alternative loading also failed: {e2}")
-            raise RuntimeError(f"Failed to load model: {e2}")
+            model = tf.keras.models.load_model(str(saved_model_dir))
+            print(f"Model loaded successfully (SavedModel): {type(model)}")
+            return model
+        except Exception as e:
+            print(f"Error loading SavedModel: {e}")
+            # 次の方法を試す
+    
+    # 方法2: TFJS形式を探す（model.json）
+    model_json_path = model_dir_path / 'model.json'
+    if model_json_path.exists():
+        print(f"Found TensorFlow.js model at: {model_json_path}")
+        try:
+            import tensorflowjs as tfjs
+            print("Loading model with tensorflowjs...")
+            model = tfjs.converters.load_keras_model(str(model_dir_path))
+            print(f"Model loaded successfully (TFJS): {type(model)}")
+            return model
+        except ImportError as e:
+            print(f"Warning: tensorflowjs not available: {e}")
+        except Exception as e:
+            print(f"Error loading TFJS model: {e}")
+    
+    # どの形式も見つからない
+    raise FileNotFoundError(
+        f"No supported model format found in {model_dir_path}. "
+        f"Expected either SavedModel (saved_model.pb) or TensorFlow.js (model.json)"
+    )
 
 
 def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
