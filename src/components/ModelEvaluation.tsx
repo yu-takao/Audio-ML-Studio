@@ -332,19 +332,29 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     try {
       console.log('Loading results from outputPath:', outputPath);
       
-      // metrics.jsonを読み込む
-      const metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
-      console.log('Transformed metricsPath:', metricsPath);
-      console.log('Full metrics file path:', `${metricsPath}/metrics.json`);
+      // S3パスからバケット名を除去: s3://bucket/evaluation/results/identity-id/job-name/
+      // → evaluation/results/identity-id/job-name/
+      let metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
+      console.log('After bucket removal:', metricsPath);
       
-      const metricsFile = await downloadData({ path: `${metricsPath}/metrics.json` }).result;
+      // Amplify Storageは evaluation/results/{entity_id}/* にアクセスする際、
+      // 自動的に現在のIdentity IDを挿入するため、パスからIdentity ID部分を除去してジョブ名だけを残す
+      // evaluation/results/identity-id/job-name/ → evaluation/results/job-name/
+      const match = metricsPath.match(/^evaluation\/results\/[^/]+\/(.+)$/);
+      if (match) {
+        metricsPath = `evaluation/results/${match[1]}`;
+      }
+      console.log('Final metricsPath:', metricsPath);
+      console.log('Full metrics file path:', `${metricsPath}metrics.json`);
+      
+      const metricsFile = await downloadData({ path: `${metricsPath}metrics.json` }).result;
       const metricsText = await metricsFile.body.text();
       const metrics = JSON.parse(metricsText);
       setEvaluationMetrics(metrics);
 
       // predictions.csvを読み込む
       try {
-        const predictionsFile = await downloadData({ path: `${metricsPath}/predictions.csv` }).result;
+        const predictionsFile = await downloadData({ path: `${metricsPath}predictions.csv` }).result;
         const predictionsText = await predictionsFile.body.text();
         const lines = predictionsText.split('\n').filter(l => l.trim());
         
