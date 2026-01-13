@@ -89,22 +89,22 @@ export const handler: Handler = async (event) => {
 
     // 環境変数を文字列として準備（すべての値を明示的に文字列に変換）
     // SageMakerは環境変数を文字列としてのみ受け付けるため、数値も文字列に変換する必要がある
-    const targetFieldValue = config.targetField !== undefined && config.targetField !== null 
-      ? String(config.targetField) 
+    const targetFieldValue = config.targetField !== undefined && config.targetField !== null
+      ? String(config.targetField)
       : '0';
-    
+
     const auxiliaryFieldsValue = Array.isArray(config.auxiliaryFields)
       ? JSON.stringify(config.auxiliaryFields.map(f => String(f !== undefined && f !== null ? f : '')))
       : JSON.stringify([]);
-    
+
     const classNamesValue = Array.isArray(config.classNames)
       ? JSON.stringify(config.classNames.map(c => String(c || '')))
       : JSON.stringify([]);
-    
+
     const inputHeightValue = config.inputHeight !== undefined && config.inputHeight !== null
       ? String(config.inputHeight)
       : '128';
-    
+
     const inputWidthValue = config.inputWidth !== undefined && config.inputWidth !== null
       ? String(config.inputWidth)
       : '128';
@@ -143,7 +143,7 @@ export const handler: Handler = async (event) => {
         {
           InputName: 'code',
           S3Input: {
-            S3Uri: `s3://${bucket}/public/scripts/evaluation/`,
+            S3Uri: `s3://${bucket}/public/scripts/evaluation-v2/`,
             LocalPath: '/opt/ml/processing/input/code',
             S3DataType: 'S3Prefix',
             S3InputMode: 'File',
