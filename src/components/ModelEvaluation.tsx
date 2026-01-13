@@ -86,7 +86,7 @@ interface FilePrediction {
 
 export function ModelEvaluation({ userId }: ModelEvaluationProps) {
   const [currentStep, setCurrentStep] = useState<Step>('select-model');
-  
+
   // モデル選択
   const [savedModels, setSavedModels] = useState<SavedModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -105,6 +105,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
   const [metadata, setMetadata] = useState<ParsedMetadata | null>(null);
   const [targetConfig, setTargetConfig] = useState<TargetFieldConfig | null>(null);
   const [auxiliaryFields, setAuxiliaryFields] = useState<AuxiliaryFieldConfig[]>([]);
+  const [problemType, setProblemType] = useState<'classification' | 'regression'>('classification');
 
   // 評価ジョブ
   const [isUploading, setIsUploading] = useState(false);
@@ -135,7 +136,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
 
       // model.tar.gz をモデルの存在判定に利用
       const models: SavedModel[] = [];
-      
+
       for (const item of result.items) {
         if (item.path.endsWith('model.tar.gz')) {
           // models/{userId}/{jobName}/output/model.tar.gz のパターン
@@ -190,7 +191,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
     if (wavFiles.length > 0) {
       const filenames = wavFiles.map(f => f.name);
       const analyzed = analyzeFilenames(filenames, undefined, '_');
-      
+
       // 選択したモデルのフィールドラベルを適用
       if (selectedModel?.fieldLabels && selectedModel.fieldLabels.length > 0) {
         const updatedFields = analyzed.fields.map(field => {
@@ -199,9 +200,9 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
         });
         analyzed.fields = updatedFields;
       }
-      
+
       setMetadata(analyzed);
-      
+
       // 選択したモデルのターゲットフィールドを自動選択
       if (selectedModel?.targetField !== undefined) {
         const targetIndex = parseInt(selectedModel.targetField, 10);
@@ -371,12 +372,12 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
   const loadEvaluationResults = async (outputPath: string) => {
     try {
       console.log('Loading results from outputPath:', outputPath);
-      
+
       // S3パスからバケット名を除去: s3://bucket/evaluation/results/identity-id/job-name/
       // → evaluation/results/identity-id/job-name/
       let metricsPath = outputPath.replace('s3://', '').replace(/^[^/]+\//, '');
       console.log('After bucket removal:', metricsPath);
-      
+
       // Identity ID部分を除去してジョブ名だけを残す
       // evaluation/results/identity-id/job-name/ → job-name/
       const match = metricsPath.match(/^evaluation\/results\/[^/]+\/(.+)$/);
@@ -386,9 +387,9 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       const jobPath = match[1]; // audio-eval-ap-north-2026-01-09T10-13-10-279Z/
       console.log('Job path:', jobPath);
       console.log('Full metrics file path:', `evaluation/results/{identityId}/${jobPath}metrics.json`);
-      
+
       // Amplify Storageのpath関数を使用してIdentity IDを明示的に解決
-      const metricsFile = await downloadData({ 
+      const metricsFile = await downloadData({
         path: ({ identityId }) => `evaluation/results/${identityId}/${jobPath}metrics.json`
       }).result;
       const metricsText = await metricsFile.body.text();
@@ -397,12 +398,12 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
 
       // predictions.csvを読み込む
       try {
-        const predictionsFile = await downloadData({ 
+        const predictionsFile = await downloadData({
           path: ({ identityId }) => `evaluation/results/${identityId}/${jobPath}predictions.csv`
         }).result;
         const predictionsText = await predictionsFile.body.text();
         const lines = predictionsText.split('\n').filter(l => l.trim());
-        
+
         // CSVパース（簡易版）
         const predictions: FilePrediction[] = [];
         for (let i = 1; i < lines.length; i++) {
@@ -446,18 +447,16 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
           {steps.map((step, idx) => (
             <div key={step.id} className="flex items-center">
               <div
-                className={`flex items-center gap-2 ${
-                  idx <= currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
-                }`}
+                className={`flex items-center gap-2 ${idx <= currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
+                  }`}
               >
                 {step.icon}
                 <span className="text-sm font-medium hidden sm:inline">{step.label}</span>
               </div>
               {idx < steps.length - 1 && (
                 <ChevronRight
-                  className={`w-5 h-5 mx-2 ${
-                    idx < currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
-                  }`}
+                  className={`w-5 h-5 mx-2 ${idx < currentStepIndex ? 'text-violet-400' : 'text-zinc-600'
+                    }`}
                 />
               )}
             </div>
@@ -534,7 +533,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
       {currentStep === 'select-data' && (
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
           <h3 className="text-lg font-semibold text-white mb-4">評価データを選択</h3>
-          
+
           {selectedModel && (
             <div className="mb-6 p-4 bg-zinc-800/30 rounded-lg border border-zinc-700">
               <p className="text-sm text-zinc-400">選択中のモデル:</p>
@@ -568,7 +567,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               </div>
               <p className="text-sm text-zinc-400">{inputFolder.name}</p>
               <p className="text-xs text-zinc-500 mt-1">{wavFiles.length} ファイル</p>
-              
+
               <button
                 onClick={() => setCurrentStep('configure-metadata')}
                 className="mt-4 w-full py-2 px-4 rounded-lg bg-violet-600 hover:bg-violet-700 font-medium flex items-center justify-center gap-2"
@@ -596,7 +595,9 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               auxiliaryFields={auxiliaryFields}
               onTargetConfigChange={setTargetConfig}
               onAuxiliaryFieldsChange={setAuxiliaryFields}
-              onFieldLabelChange={() => {}} // 評価時はラベル変更不要
+              onFieldLabelChange={() => { }} // 評価時はラベル変更不要
+              problemType={problemType}
+              onProblemTypeChange={setProblemType}
             />
           </div>
 
