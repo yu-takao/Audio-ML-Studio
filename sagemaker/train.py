@@ -10,6 +10,7 @@ SageMaker Training Script for Audio Classification (Script Mode)
 
 import os
 import json
+import ast
 import argparse
 import numpy as np
 import tensorflow as tf
@@ -307,9 +308,15 @@ def main():
     else:
         field_labels_str = args.field_labels
     
-    # シングルクォートをダブルクォートに置き換え（PythonリテラルをJSON形式に変換）
-    field_labels_str = field_labels_str.replace("'", '"')
-    field_labels = json.loads(field_labels_str)
+    # Pythonリテラル形式（シングルクォート）を評価してからJSONに変換
+    try:
+        # ast.literal_eval()でPythonリテラルを評価
+        field_labels = ast.literal_eval(field_labels_str)
+    except (ValueError, SyntaxError):
+        # 失敗した場合はJSONとして解析を試みる
+        # シングルクォートをダブルクォートに置き換え
+        field_labels_str = field_labels_str.replace("'", '"')
+        field_labels = json.loads(field_labels_str)
     
     if isinstance(args.class_names, list):
         # リストとして受け取った場合、JSON文字列に結合して解析
@@ -317,9 +324,15 @@ def main():
     else:
         class_names_str = args.class_names
     
-    # シングルクォートをダブルクォートに置き換え（PythonリテラルをJSON形式に変換）
-    class_names_str = class_names_str.replace("'", '"')
-    class_names = json.loads(class_names_str)
+    # Pythonリテラル形式（シングルクォート）を評価してからJSONに変換
+    try:
+        # ast.literal_eval()でPythonリテラルを評価
+        class_names = ast.literal_eval(class_names_str)
+    except (ValueError, SyntaxError):
+        # 失敗した場合はJSONとして解析を試みる
+        # シングルクォートをダブルクォートに置き換え
+        class_names_str = class_names_str.replace("'", '"')
+        class_names = json.loads(class_names_str)
     
     problem_type = args.problem_type  # 問題タイプ
     tolerance = args.tolerance  # 許容範囲
