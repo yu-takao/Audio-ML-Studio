@@ -36,10 +36,12 @@ def parse_args():
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
     parser.add_argument('--auxiliary_fields', type=str, default='[]')
-    parser.add_argument('--field_labels', type=str, default='[]')  # フィールドラベル情報
+    # フィールドラベル情報（JSON文字列、--で始まる次の引数まで全て受け取る）
+    parser.add_argument('--field_labels', type=str, nargs='*', default=[])
     parser.add_argument('--problem_type', type=str, default='classification')  # 問題タイプ
     parser.add_argument('--tolerance', type=float, default=0.0)  # 許容範囲
-    parser.add_argument('--class_names', type=str, default='[]')
+    # クラス名（JSON文字列、--で始まる次の引数まで全て受け取る）
+    parser.add_argument('--class_names', type=str, nargs='*', default=[])
     
     # S3関連パラメータ（環境変数からも取得可能だが、ハイパーパラメータとしても渡される場合がある）
     parser.add_argument('--bucket_name', type=str, default='')
@@ -297,10 +299,24 @@ def main():
     os.system('pip install librosa soundfile --quiet')
     
     auxiliary_fields = json.loads(args.auxiliary_fields)
-    field_labels = json.loads(args.field_labels)  # フィールドラベル情報
+    
+    # field_labelsとclass_namesはnargs='*'で受け取るため、リストまたは文字列
+    if isinstance(args.field_labels, list):
+        # リストとして受け取った場合、JSON文字列に結合して解析
+        field_labels_str = ' '.join(args.field_labels) if args.field_labels else '[]'
+    else:
+        field_labels_str = args.field_labels
+    field_labels = json.loads(field_labels_str)
+    
+    if isinstance(args.class_names, list):
+        # リストとして受け取った場合、JSON文字列に結合して解析
+        class_names_str = ' '.join(args.class_names) if args.class_names else '[]'
+    else:
+        class_names_str = args.class_names
+    class_names = json.loads(class_names_str)
+    
     problem_type = args.problem_type  # 問題タイプ
     tolerance = args.tolerance  # 許容範囲
-    class_names = json.loads(args.class_names)
     target_field = int(args.target_field)
     
     print(f"Problem type: {problem_type}")
