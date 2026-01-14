@@ -172,6 +172,8 @@ export interface TargetFieldConfig {
   groupingMode: 'individual' | 'range' | 'custom';
   ranges?: { min: number; max: number; label: string }[];
   customGroups?: { values: string[]; label: string }[];
+  problemType?: 'classification' | 'regression';
+  tolerance?: number;
 }
 
 /**

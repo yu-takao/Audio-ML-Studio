@@ -45,6 +45,8 @@ interface SavedModel {
   targetField?: string;
   auxiliaryFields?: AuxiliaryFieldConfig[];
   fieldLabels?: FieldLabel[]; // フィールドラベル情報
+  problemType?: 'classification' | 'regression';
+  tolerance?: number;
 }
 
 // 評価ジョブのステータス
@@ -159,6 +161,8 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               targetField: metadata.target_field,
               auxiliaryFields: metadata.auxiliary_fields || [],
               fieldLabels: metadata.field_labels || [], // フィールドラベル情報
+              problemType: metadata.problem_type || 'classification',
+              tolerance: metadata.tolerance || 0,
             });
           } catch (err) {
             // メタデータがない場合もモデルは表示
@@ -213,7 +217,13 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
             fieldName: targetField.label,
             useAsTarget: true,
             groupingMode: 'individual',
+            problemType: selectedModel.problemType || 'classification',
+            tolerance: selectedModel.tolerance || 0,
           });
+          // problemTypeのstateも更新
+          if (selectedModel.problemType) {
+            setProblemType(selectedModel.problemType);
+          }
         }
       }
     }
@@ -302,6 +312,8 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
             classNames: Array.from(classNames).sort(),
             inputHeight: 128,
             inputWidth: 128,
+            problemType: targetConfig.problemType || problemType || 'classification',
+            tolerance: targetConfig.tolerance || 0,
           },
         }),
       });
@@ -515,6 +527,22 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
                         <Calendar className="w-3 h-3" />
                         <span>{model.createdAt.toLocaleString('ja-JP')}</span>
                       </div>
+                      {model.problemType && (
+                        <div className="mt-2">
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            model.problemType === 'regression' 
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                              : 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                          }`}>
+                            {model.problemType === 'regression' ? '回帰問題' : '分類問題'}
+                          </span>
+                          {model.problemType === 'regression' && model.tolerance !== undefined && (
+                            <span className="ml-2 text-xs text-zinc-400">
+                              許容範囲: {model.tolerance}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {model.classes && model.classes.length > 0 && (
                         <div className="mt-2 text-xs text-zinc-400">
                           <span>クラス数: {model.classes.length}</span>
@@ -597,7 +625,18 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               onAuxiliaryFieldsChange={setAuxiliaryFields}
               onFieldLabelChange={() => { }} // 評価時はラベル変更不要
               problemType={problemType}
-              onProblemTypeChange={setProblemType}
+              onProblemTypeChange={(type) => {
+                setProblemType(type);
+                if (targetConfig) {
+                  setTargetConfig({ ...targetConfig, problemType: type });
+                }
+              }}
+              tolerance={targetConfig?.tolerance || 0}
+              onToleranceChange={(tolerance) => {
+                if (targetConfig) {
+                  setTargetConfig({ ...targetConfig, tolerance });
+                }
+              }}
             />
           </div>
 
