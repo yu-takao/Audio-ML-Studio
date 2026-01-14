@@ -306,6 +306,9 @@ def main():
         field_labels_str = ' '.join(args.field_labels) if args.field_labels else '[]'
     else:
         field_labels_str = args.field_labels
+    
+    # シングルクォートをダブルクォートに置き換え（PythonリテラルをJSON形式に変換）
+    field_labels_str = field_labels_str.replace("'", '"')
     field_labels = json.loads(field_labels_str)
     
     if isinstance(args.class_names, list):
@@ -313,6 +316,9 @@ def main():
         class_names_str = ' '.join(args.class_names) if args.class_names else '[]'
     else:
         class_names_str = args.class_names
+    
+    # シングルクォートをダブルクォートに置き換え（PythonリテラルをJSON形式に変換）
+    class_names_str = class_names_str.replace("'", '"')
     class_names = json.loads(class_names_str)
     
     problem_type = args.problem_type  # 問題タイプ
