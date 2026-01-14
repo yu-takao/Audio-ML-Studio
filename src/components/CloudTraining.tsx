@@ -283,6 +283,16 @@ export function CloudTraining({
   const customConfig = (outputs as { custom?: { startTrainingUrl?: string; getTrainingStatusUrl?: string } }).custom;
   const START_TRAINING_URL = customConfig?.startTrainingUrl || '';
   const GET_STATUS_URL = customConfig?.getTrainingStatusUrl || '';
+  
+  // URLの検証（デバッグ用）
+  useEffect(() => {
+    if (!GET_STATUS_URL) {
+      console.error('[CloudTraining] GET_STATUS_URL is not set. Check amplify_outputs.json');
+      setError('APIエンドポイントが設定されていません。ページをリロードしてください。');
+    } else {
+      console.log('[CloudTraining] GET_STATUS_URL:', GET_STATUS_URL);
+    }
+  }, [GET_STATUS_URL]);
 
   // S3データセットを使用するかどうか
   const isUsingS3Dataset = !!s3DatasetPath;
@@ -540,12 +550,21 @@ export function CloudTraining({
 
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(
-          `${GET_STATUS_URL}?trainingJobName=${encodeURIComponent(trainingJobName)}`
-        );
+        if (!GET_STATUS_URL) {
+          console.error('[CloudTraining] GET_STATUS_URL is not set, cannot poll status');
+          clearInterval(interval);
+          setPollingInterval(null);
+          setError('APIエンドポイントが設定されていません。ページをリロードしてください。');
+          return;
+        }
+        
+        const url = `${GET_STATUS_URL}?trainingJobName=${encodeURIComponent(trainingJobName)}`;
+        console.log('[CloudTraining] Polling status from:', url);
+        
+        const response = await fetch(url);
 
         if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
+          throw new Error(`API error: ${response.status} ${response.statusText}`);
         }
 
         const status = await response.json();
