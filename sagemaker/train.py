@@ -41,6 +41,11 @@ def parse_args():
     parser.add_argument('--tolerance', type=float, default=0.0)  # 許容範囲
     parser.add_argument('--class_names', type=str, default='[]')
     
+    # S3関連パラメータ（環境変数からも取得可能だが、ハイパーパラメータとしても渡される場合がある）
+    parser.add_argument('--bucket_name', type=str, default='')
+    parser.add_argument('--user_id', type=str, default='')
+    parser.add_argument('--job_name', type=str, default='')
+    
     # SageMaker 環境変数
     parser.add_argument('--model_dir', type=str, default=SM_MODEL_DIR)
     parser.add_argument('--train', type=str, default=SM_CHANNEL_TRAINING)
@@ -265,6 +270,11 @@ def load_dataset(args, class_names: list, target_field: int, auxiliary_fields: l
 def main():
     args = parse_args()
     
+    # 環境変数からも取得（優先順位: 環境変数 > ハイパーパラメータ）
+    bucket_name = os.environ.get('BUCKET_NAME', args.bucket_name)
+    user_id = os.environ.get('USER_ID', args.user_id)
+    job_name = os.environ.get('JOB_NAME', args.job_name)
+    
     print("=" * 50)
     print("Audio ML Training Script (SageMaker Script Mode)")
     print("=" * 50)
@@ -274,6 +284,12 @@ def main():
     print(f"Input Size: {args.input_height}x{args.input_width}")
     print(f"Training Data: {args.train}")
     print(f"Model Output: {args.model_dir}")
+    if bucket_name:
+        print(f"Bucket: {bucket_name}")
+    if user_id:
+        print(f"User ID: {user_id}")
+    if job_name:
+        print(f"Job Name: {job_name}")
     print("=" * 50)
     
     # 追加パッケージのインストール
