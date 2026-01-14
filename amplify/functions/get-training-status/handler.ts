@@ -10,7 +10,7 @@ interface StatusRequest {
 // レスポンスヘッダー（CORSはFunction URLで処理）
 const responseHeaders = {
   'Content-Type': 'application/json',
-};
+  };
 
 export const handler: Handler = async (event) => {
   console.log('Event:', JSON.stringify(event, null, 2));

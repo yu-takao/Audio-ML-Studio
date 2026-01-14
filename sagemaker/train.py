@@ -397,7 +397,7 @@ def main():
     except Exception as e:
         print(f"TensorFlow.js conversion skipped: {e}")
     
-    # メタデータ保存
+    # メタデータ保存（model_metadata.jsonとして保存）
     metadata = {
         'class_names': class_names,
         'target_field': target_field,
@@ -412,8 +412,24 @@ def main():
         'epochs_trained': len(history.history['loss']),
     }
     
+    # model_metadata.jsonとして保存（アプリケーション側の期待に合わせる）
+    with open(os.path.join(args.model_dir, 'model_metadata.json'), 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    # 後方互換性のためmetadata.jsonも保存
     with open(os.path.join(args.model_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
+    
+    # label_encoder.jsonとして保存（評価時に使用）
+    label_encoder_data = {
+        'classes': class_names,
+        'problem_type': problem_type,
+        'tolerance': tolerance,
+        'target_field': target_field,
+    }
+    with open(os.path.join(args.model_dir, 'label_encoder.json'), 'w') as f:
+        json.dump(label_encoder_data, f, indent=2)
+    print(f"Label encoder saved: {len(class_names)} classes, problem_type={problem_type}, tolerance={tolerance}")
     
     # 訓練履歴保存
     history_data = {
