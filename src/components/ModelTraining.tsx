@@ -236,64 +236,140 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   }, []);
 
   /**
-   * S3からデータセット一覧を取得
+   * S3からデータセット一覧を取得（インデックスファイルを使用）
    */
   const loadS3Datasets = useCallback(async () => {
     setIsLoadingS3(true);
     setError(null);
 
     try {
-      // public/training-data/ 以下のフォルダを取得
-      const result = await list({
-        path: 'public/training-data/',
-        options: {
-          listAll: true,
-        },
-      });
+      // インデックスファイルのパス
+      const indexPath = `public/user-data/${userId}/datasets.json`;
 
-      // フォルダごとにグループ化
-      const datasetMap = new Map<string, { files: number; size: number; lastModified: Date }>();
+      try {
+        // インデックスファイルを読み込む（高速）
+        const downloadResult = await downloadData({
+          path: indexPath,
+        }).result;
 
-      for (const item of result.items) {
-        // パスからデータセット名を抽出 (public/training-data/userId/timestamp/...)
-        const parts = item.path.split('/');
-        if (parts.length >= 4) {
-          const datasetPath = parts.slice(0, 4).join('/');
-          const existing = datasetMap.get(datasetPath) || { files: 0, size: 0, lastModified: new Date(0) };
-          existing.files++;
-          existing.size += item.size || 0;
-          if (item.lastModified && item.lastModified > existing.lastModified) {
-            existing.lastModified = item.lastModified;
+        const text = await downloadResult.body.text();
+        const indexData: { datasets: Array<{ path: string; name: string; fileCount: number; lastModified: string; size: number }> } = JSON.parse(text);
+
+        // データセット一覧に変換
+        const datasets: S3Dataset[] = indexData.datasets.map(d => ({
+          path: d.path,
+          name: d.name,
+          fileCount: d.fileCount,
+          lastModified: new Date(d.lastModified),
+          size: d.size,
+        }));
+
+        // 日付順にソート
+        datasets.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+
+        setS3Datasets(datasets);
+        console.log(`Loaded ${datasets.length} datasets from index file`);
+      } catch (indexErr) {
+        // インデックスファイルが存在しない場合は、従来の方法で取得（後方互換性）
+        console.warn('Index file not found, falling back to full scan:', indexErr);
+        
+        // public/training-data/ 以下のフォルダのみを取得（ファイルではなくフォルダ）
+        const result = await list({
+          path: `public/training-data/${userId}/`,
+          options: {
+            listAll: false, // フォルダレベルのみ
+          },
+        });
+
+        // フォルダごとにグループ化
+        const datasetMap = new Map<string, { files: number; size: number; lastModified: Date }>();
+
+        // 各フォルダ（データセット）を処理
+        for (const item of result.items) {
+          if (item.path.endsWith('/')) {
+            // フォルダの場合、そのフォルダ内のファイル数を取得
+            try {
+              const folderFiles = await list({
+                path: item.path,
+                options: {
+                  listAll: true,
+                },
+              });
+
+              const datasetPath = item.path.slice(0, -1); // 末尾の/を削除
+              let totalSize = 0;
+              let maxLastModified = new Date(0);
+
+              for (const file of folderFiles.items) {
+                if (!file.path.endsWith('/')) {
+                  totalSize += file.size || 0;
+                  if (file.lastModified && file.lastModified > maxLastModified) {
+                    maxLastModified = file.lastModified;
+                  }
+                }
+              }
+
+              datasetMap.set(datasetPath, {
+                files: folderFiles.items.filter(f => !f.path.endsWith('/')).length,
+                size: totalSize,
+                lastModified: maxLastModified,
+              });
+            } catch (folderErr) {
+              console.warn(`Failed to scan folder ${item.path}:`, folderErr);
+            }
           }
-          datasetMap.set(datasetPath, existing);
+        }
+
+        // データセット一覧に変換
+        const datasets: S3Dataset[] = [];
+        datasetMap.forEach((info, path) => {
+          const parts = path.split('/');
+          const timestamp = parts[parts.length - 1];
+          datasets.push({
+            path,
+            name: `データセット ${new Date(parseInt(timestamp)).toLocaleString('ja-JP')}`,
+            fileCount: info.files,
+            lastModified: info.lastModified,
+            size: info.size,
+          });
+        });
+
+        // 日付順にソート
+        datasets.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+
+        setS3Datasets(datasets);
+        
+        // インデックスファイルを作成（次回の高速化のため）
+        if (datasets.length > 0) {
+          try {
+            await uploadData({
+              path: indexPath,
+              data: JSON.stringify({
+                datasets: datasets.map(d => ({
+                  path: d.path,
+                  name: d.name,
+                  fileCount: d.fileCount,
+                  lastModified: d.lastModified.toISOString(),
+                  size: d.size,
+                })),
+              }, null, 2),
+              options: {
+                contentType: 'application/json',
+              },
+            }).result;
+            console.log('Created index file for faster loading');
+          } catch (uploadErr) {
+            console.warn('Failed to create index file:', uploadErr);
+          }
         }
       }
-
-      // データセット一覧に変換
-      const datasets: S3Dataset[] = [];
-      datasetMap.forEach((info, path) => {
-        const parts = path.split('/');
-        const timestamp = parts[3];
-        datasets.push({
-          path,
-          name: `データセット ${new Date(parseInt(timestamp)).toLocaleString('ja-JP')}`,
-          fileCount: info.files,
-          lastModified: info.lastModified,
-          size: info.size,
-        });
-      });
-
-      // 日付順にソート
-      datasets.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
-
-      setS3Datasets(datasets);
     } catch (err) {
       console.error('Failed to load S3 datasets:', err);
       setError('S3からデータセット一覧を取得できませんでした');
     } finally {
       setIsLoadingS3(false);
     }
-  }, []);
+  }, [userId]);
 
   /**
    * S3データセットを選択してメタデータを読み込む
@@ -373,10 +449,69 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         },
       }).result;
       console.log('Metadata saved to S3');
+
+      // データセットインデックスを更新
+      await updateDatasetIndex(dataPath, datasetInfo.totalFiles);
     } catch (err) {
       console.error('Failed to save metadata:', err);
     }
   }, [metadata, targetConfig, auxiliaryFields, datasetInfo]);
+
+  /**
+   * データセットインデックスを更新
+   */
+  const updateDatasetIndex = useCallback(async (dataPath: string, fileCount: number) => {
+    try {
+      const indexPath = `public/user-data/${userId}/datasets.json`;
+      
+      // 既存のインデックスを読み込む
+      let existingDatasets: Array<{ path: string; name: string; fileCount: number; lastModified: string; size: number }> = [];
+      try {
+        const downloadResult = await downloadData({
+          path: indexPath,
+        }).result;
+        const text = await downloadResult.body.text();
+        const indexData = JSON.parse(text);
+        existingDatasets = indexData.datasets || [];
+      } catch {
+        // インデックスファイルが存在しない場合は空配列から開始
+      }
+
+      // パスからデータセット名を抽出
+      const parts = dataPath.split('/');
+      const timestamp = parts[parts.length - 1];
+      const datasetName = `データセット ${new Date(parseInt(timestamp)).toLocaleString('ja-JP')}`;
+
+      // 既存のエントリを更新または新規追加
+      const existingIndex = existingDatasets.findIndex(d => d.path === dataPath);
+      const datasetEntry = {
+        path: dataPath,
+        name: datasetName,
+        fileCount,
+        lastModified: new Date().toISOString(),
+        size: 0, // サイズは後で更新可能
+      };
+
+      if (existingIndex >= 0) {
+        existingDatasets[existingIndex] = datasetEntry;
+      } else {
+        existingDatasets.push(datasetEntry);
+      }
+
+      // インデックスファイルを保存
+      await uploadData({
+        path: indexPath,
+        data: JSON.stringify({ datasets: existingDatasets }, null, 2),
+        options: {
+          contentType: 'application/json',
+        },
+      }).result;
+      console.log('Dataset index updated');
+    } catch (err) {
+      console.warn('Failed to update dataset index:', err);
+      // インデックスの更新に失敗してもメタデータの保存は成功しているので続行
+    }
+  }, [userId]);
 
   /**
    * ローカルフォルダをスキャンしてデータを読み込む
