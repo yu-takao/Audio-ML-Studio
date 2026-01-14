@@ -1,0 +1,102 @@
+{
+  "auth": {
+    "user_pool_id": "ap-northeast-1_XGE7yst15",
+    "aws_region": "ap-northeast-1",
+    "user_pool_client_id": "1tkqiegsp43ea1g0dicl09nia3",
+    "identity_pool_id": "ap-northeast-1:ce2fd7a7-3b09-4440-bfa0-65b9f0cb15e5",
+    "mfa_methods": [],
+    "standard_required_attributes": [
+      "email"
+    ],
+    "username_attributes": [
+      "email"
+    ],
+    "user_verification_types": [
+      "email"
+    ],
+    "groups": [],
+    "mfa_configuration": "NONE",
+    "password_policy": {
+      "min_length": 8,
+      "require_lowercase": true,
+      "require_numbers": true,
+      "require_symbols": true,
+      "require_uppercase": true
+    },
+    "unauthenticated_identities_enabled": true
+  },
+  "storage": {
+    "aws_region": "ap-northeast-1",
+    "bucket_name": "amplify-audioaugmentation-audiomlstoragebucket57fe-auidriqi877t",
+    "buckets": [
+      {
+        "name": "audioMLStorage",
+        "bucket_name": "amplify-audioaugmentation-audiomlstoragebucket57fe-auidriqi877t",
+        "aws_region": "ap-northeast-1",
+        "paths": {
+          "training-data/${cognito-identity.amazonaws.com:sub}/*": {
+            "entityidentity": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "models/*": {
+            "authenticated": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "configs/${cognito-identity.amazonaws.com:sub}/*": {
+            "entityidentity": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "evaluation/temp/${cognito-identity.amazonaws.com:sub}/*": {
+            "entityidentity": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "evaluation/results/${cognito-identity.amazonaws.com:sub}/*": {
+            "entityidentity": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          },
+          "public/*": {
+            "guest": [
+              "get",
+              "list",
+              "write"
+            ],
+            "authenticated": [
+              "get",
+              "list",
+              "write",
+              "delete"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "version": "1.4",
+  "custom": {
+    "startTrainingUrl": "https://4ktrn23uczwz7cma5dwwtlkbsa0zopke.lambda-url.ap-northeast-1.on.aws/",
+    "getTrainingStatusUrl": "https://rf5kjs3v3d4ymk7dtqya57aihu0psdts.lambda-url.ap-northeast-1.on.aws/",
+    "startAnalysisUrl": "https://zw3gle3wpvekxlrrivamggaddq0tmfqp.lambda-url.ap-northeast-1.on.aws/",
+    "startEvaluationUrl": "https://un2cbhbjfnyza3epiyjhohfolu0clqjx.lambda-url.ap-northeast-1.on.aws/",
+    "getEvaluationStatusUrl": "https://cbrfsuilfylgr27r4cayis4zwe0hffgv.lambda-url.ap-northeast-1.on.aws/"
+  }
+}

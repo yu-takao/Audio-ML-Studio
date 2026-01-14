@@ -48,9 +48,12 @@ def parse_args():
     parser.add_argument('--input_height', type=int, default=128)
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
-    # nargs='*'でリスト引数を受け取る（SageMakerがスペースで分割するため）
     parser.add_argument('--auxiliary_fields', nargs='*', default=[])
     parser.add_argument('--class_names', nargs='*', default=[])
+    # 問題タイプ: classification または regression
+    parser.add_argument('--problem_type', type=str, default='classification', choices=['classification', 'regression'])
+    # 回帰の許容誤差（正解判定用）
+    parser.add_argument('--tolerance', type=float, default=0.0)
     # S3アップロード用情報（オプション）
     parser.add_argument('--bucket_name', type=str, default=None)
     parser.add_argument('--user_id', type=str, default=None)
@@ -200,9 +203,9 @@ def check_presplit_data(data_dir: str):
     return False, None, None, None
 
 
-def build_model(input_shape: tuple, num_classes: int, learning_rate: float):
-    """CNNモデルを構築"""
-    logger.info(f"Building model with input shape {input_shape} and {num_classes} classes")
+def build_classification_model(input_shape: tuple, num_classes: int, learning_rate: float):
+    """分類用CNNモデルを構築"""
+    logger.info(f"Building classification model with input shape {input_shape} and {num_classes} classes")
     
     model = models.Sequential([
         # 入力層
@@ -241,7 +244,7 @@ def build_model(input_shape: tuple, num_classes: int, learning_rate: float):
         layers.BatchNormalization(),
         layers.Dropout(0.5),
         
-        # 出力層
+        # 出力層（分類: softmax）
         layers.Dense(num_classes, activation='softmax')
     ])
     
@@ -256,14 +259,72 @@ def build_model(input_shape: tuple, num_classes: int, learning_rate: float):
     return model
 
 
+def build_regression_model(input_shape: tuple, learning_rate: float):
+    """回帰用CNNモデルを構築"""
+    logger.info(f"Building regression model with input shape {input_shape}")
+    
+    model = models.Sequential([
+        # 入力層
+        layers.Input(shape=input_shape),
+        
+        # 畳み込みブロック1
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # 畳み込みブロック2
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # 畳み込みブロック3
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # 畳み込みブロック4
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # 全結合層
+        layers.Flatten(),
+        layers.Dense(512, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        layers.Dense(256, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        
+        # 出力層（回帰: linear）
+        layers.Dense(1, activation='linear')
+    ])
+    
+    # コンパイル（回帰用: MSE損失、MAE指標）
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+    model.compile(
+        optimizer=optimizer,
+        loss='mse',
+        metrics=['mae']
+    )
+    
+    return model
+
+
 def main():
     """メイン関数"""
     args = parse_args()
     
     logger.info("=" * 50)
-    logger.info("Audio Classification Training Script")
+    logger.info("Audio ML Training Script")
     logger.info("=" * 50)
     logger.info(f"Parameters:")
+    logger.info(f"  - problem_type: {args.problem_type}")
+    logger.info(f"  - tolerance: {args.tolerance}")
     logger.info(f"  - epochs: {args.epochs}")
     logger.info(f"  - batch_size: {args.batch_size}")
     logger.info(f"  - learning_rate: {args.learning_rate}")
@@ -331,18 +392,34 @@ def main():
         X_val = X_val_raw[..., np.newaxis]
         X_test = X_test_raw[..., np.newaxis]
         
-        # 全ラベルを集めてエンコーダーを学習
-        all_labels = labels_train + labels_val + labels_test
-        label_encoder = LabelEncoder()
-        label_encoder.fit(all_labels)
+        if args.problem_type == 'regression':
+            # 回帰: ラベルを数値に変換
+            logger.info("Processing labels for regression...")
+            try:
+                y_train = np.array([float(l) for l in labels_train], dtype=np.float32)
+                y_val = np.array([float(l) for l in labels_val], dtype=np.float32)
+                y_test = np.array([float(l) for l in labels_test], dtype=np.float32)
+            except ValueError as e:
+                raise ValueError(f"Failed to convert labels to float for regression: {e}")
+            
+            unique_labels = np.unique(np.concatenate([y_train, y_val, y_test]))
+            label_encoder = None  # 回帰ではエンコーダー不要
+            logger.info(f"Regression target range: {y_train.min():.2f} to {y_train.max():.2f}")
+            logger.info(f"Unique values: {len(unique_labels)}")
+        else:
+            # 分類: 従来通りLabelEncoderを使用
+            all_labels = labels_train + labels_val + labels_test
+            label_encoder = LabelEncoder()
+            label_encoder.fit(all_labels)
+            
+            y_train = label_encoder.transform(labels_train)
+            y_val = label_encoder.transform(labels_val)
+            y_test = label_encoder.transform(labels_test)
+            
+            unique_labels = label_encoder.classes_
+            logger.info(f"Classes found: {unique_labels}")
+            logger.info(f"Number of classes: {len(unique_labels)}")
         
-        y_train = label_encoder.transform(labels_train)
-        y_val = label_encoder.transform(labels_val)
-        y_test = label_encoder.transform(labels_test)
-        
-        unique_labels = label_encoder.classes_
-        logger.info(f"Classes found: {unique_labels}")
-        logger.info(f"Number of classes: {len(unique_labels)}")
         logger.info(f"Pre-split dataset:")
         logger.info(f"  - Training: {len(X_train)} samples (augmented)")
         logger.info(f"  - Validation: {len(X_val)} samples (original)")
@@ -367,31 +444,53 @@ def main():
         # チャンネル次元を追加 (height, width) -> (height, width, 1)
         X = X[..., np.newaxis]
         
-        # ラベルをエンコード
-        label_encoder = LabelEncoder()
-        y = label_encoder.fit_transform(labels)
-        
-        # クラス情報をログ出力
-        unique_labels = label_encoder.classes_
-        logger.info(f"Classes found: {unique_labels}")
-        logger.info(f"Number of classes: {len(unique_labels)}")
-        logger.info(f"Samples per class:")
-        for cls in unique_labels:
-            count = sum(1 for l in labels if l == cls)
-            logger.info(f"  - {cls}: {count} samples")
-        
-        # データを分割
-        # まずテストデータを分離
-        test_size = args.test_split
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y
-        )
-        
-        # 残りを訓練と検証に分割
-        val_size = args.validation_split / (1 - test_size)
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
-        )
+        if args.problem_type == 'regression':
+            # 回帰: ラベルを数値に変換
+            logger.info("Processing labels for regression...")
+            try:
+                y = np.array([float(l) for l in labels], dtype=np.float32)
+            except ValueError as e:
+                raise ValueError(f"Failed to convert labels to float for regression: {e}")
+            
+            unique_labels = np.unique(y)
+            label_encoder = None
+            logger.info(f"Regression target range: {y.min():.2f} to {y.max():.2f}")
+            logger.info(f"Unique values: {len(unique_labels)}")
+            
+            # データを分割（回帰ではstratifyを使用しない）
+            test_size = args.test_split
+            X_temp, X_test, y_temp, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=42
+            )
+            
+            val_size = args.validation_split / (1 - test_size)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_temp, y_temp, test_size=val_size, random_state=42
+            )
+        else:
+            # 分類: ラベルをエンコード
+            label_encoder = LabelEncoder()
+            y = label_encoder.fit_transform(labels)
+            
+            # クラス情報をログ出力
+            unique_labels = label_encoder.classes_
+            logger.info(f"Classes found: {unique_labels}")
+            logger.info(f"Number of classes: {len(unique_labels)}")
+            logger.info(f"Samples per class:")
+            for cls in unique_labels:
+                count = sum(1 for l in labels if l == cls)
+                logger.info(f"  - {cls}: {count} samples")
+            
+            # データを分割（分類ではstratifyを使用）
+            test_size = args.test_split
+            X_temp, X_test, y_temp, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=42, stratify=y
+            )
+            
+            val_size = args.validation_split / (1 - test_size)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_temp, y_temp, test_size=val_size, random_state=42, stratify=y_temp
+            )
         
         logger.info(f"Dataset split:")
         logger.info(f"  - Training: {len(X_train)} samples")
@@ -401,8 +500,11 @@ def main():
     
     # モデルを構築
     input_shape = (args.input_height, args.input_width, 1)
-    num_classes = len(unique_labels)
-    model = build_model(input_shape, num_classes, args.learning_rate)
+    if args.problem_type == 'regression':
+        model = build_regression_model(input_shape, args.learning_rate)
+    else:
+        num_classes = len(unique_labels)
+        model = build_classification_model(input_shape, num_classes, args.learning_rate)
     
     model.summary(print_fn=logger.info)
     
@@ -434,9 +536,16 @@ def main():
     
     # テストデータで評価
     logger.info("Evaluating on test data...")
-    test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
-    logger.info(f"Test Loss: {test_loss:.4f}")
-    logger.info(f"Test Accuracy: {test_accuracy:.4f}")
+    if args.problem_type == 'regression':
+        test_loss, test_mae = model.evaluate(X_test, y_test, verbose=0)
+        logger.info(f"Test Loss (MSE): {test_loss:.4f}")
+        logger.info(f"Test MAE: {test_mae:.4f}")
+        test_metric = test_mae  # 回帰ではMAEを主指標として使用
+    else:
+        test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
+        logger.info(f"Test Loss: {test_loss:.4f}")
+        logger.info(f"Test Accuracy: {test_accuracy:.4f}")
+        test_metric = test_accuracy
     
     # モデルを保存
     model_path = os.path.join(args.model_dir, 'audio_classifier')
@@ -458,17 +567,27 @@ def main():
     job_name = args.job_name or os.environ.get('JOB_NAME')
 
     # メタデータを保存
-    def build_split_class_distribution(y_encoded: np.ndarray, encoder: LabelEncoder):
+    def build_split_class_distribution(y_encoded: np.ndarray, encoder):
         dist = {}
-        if y_encoded is None:
+        if y_encoded is None or encoder is None:
             return dist
         classes = encoder.classes_
         for idx, cls in enumerate(classes):
             dist[str(cls)] = int(np.sum(y_encoded == idx))
         return dist
 
+    # 問題タイプに応じてメトリクス名を変更
+    if args.problem_type == 'regression':
+        metric_key = 'mae'
+        history_metric_key = 'mae'
+    else:
+        metric_key = 'accuracy'
+        history_metric_key = 'accuracy'
+
     metadata = {
-        'classes': unique_labels.tolist(),
+        'problem_type': args.problem_type,
+        'tolerance': args.tolerance,
+        'classes': unique_labels.tolist() if hasattr(unique_labels, 'tolist') else list(unique_labels),
         'input_shape': list(input_shape),
         'target_field': args.target_field,
         'auxiliary_fields': auxiliary_indices,
@@ -480,11 +599,7 @@ def main():
                 'test': int(len(X_test)),
                 'total': int(len(X_train) + len(X_val) + len(X_test)),
             },
-            'class_distribution': {
-                'train': build_split_class_distribution(y_train, label_encoder),
-                'validation': build_split_class_distribution(y_val, label_encoder),
-                'test': build_split_class_distribution(y_test, label_encoder),
-            }
+            'class_distribution': build_split_class_distribution(y_train, label_encoder) if label_encoder else {}
         },
         'training_params': {
             'epochs': args.epochs,
@@ -495,17 +610,17 @@ def main():
         },
         'metrics': {
             'test_loss': float(test_loss),
-            'test_accuracy': float(test_accuracy),
+            f'test_{metric_key}': float(test_metric),
             'final_train_loss': float(history.history['loss'][-1]),
-            'final_train_accuracy': float(history.history['accuracy'][-1]),
+            f'final_train_{metric_key}': float(history.history[history_metric_key][-1]),
             'final_val_loss': float(history.history['val_loss'][-1]),
-            'final_val_accuracy': float(history.history['val_accuracy'][-1]),
+            f'final_val_{metric_key}': float(history.history[f'val_{history_metric_key}'][-1]),
         },
         'history': {
             'loss': [float(x) for x in history.history['loss']],
-            'accuracy': [float(x) for x in history.history['accuracy']],
+            metric_key: [float(x) for x in history.history[history_metric_key]],
             'val_loss': [float(x) for x in history.history['val_loss']],
-            'val_accuracy': [float(x) for x in history.history['val_accuracy']],
+            f'val_{metric_key}': [float(x) for x in history.history[f'val_{history_metric_key}']],
         }
     }
     
@@ -514,10 +629,15 @@ def main():
         json.dump(metadata, f, indent=2)
     logger.info(f"Metadata saved to {metadata_path}")
     
-    # ラベルエンコーダーも保存
+    # ラベルエンコーダーも保存（problem_typeとtoleranceを含める）
+    label_encoder_data = {
+        'classes': unique_labels.tolist() if hasattr(unique_labels, 'tolist') else list(unique_labels),
+        'problem_type': args.problem_type,
+        'tolerance': args.tolerance,
+    }
     label_encoder_path = os.path.join(args.model_dir, 'label_encoder.json')
     with open(label_encoder_path, 'w') as f:
-        json.dump({'classes': unique_labels.tolist()}, f)
+        json.dump(label_encoder_data, f)
     logger.info(f"Label encoder saved to {label_encoder_path}")
 
     # 追加: S3へメタデータとラベルエンコーダーを直接アップロード（クライアントで別オブジェクトとして取得できるようにする）

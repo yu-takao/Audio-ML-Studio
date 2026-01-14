@@ -1,6 +1,6 @@
 /**
- * 訓練データ拡張コンポーネント
- * Train分割のみを対象にデータ拡張とクラスバランシングを行う
+ * 訓練データ拡張コンポーネント（統合版）
+ * Train分割のみを対象にデータ拡張とクラスバランシングを統合的に行う
  */
 
 import { useState, useCallback, useMemo } from 'react';
@@ -12,7 +12,8 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
-  PlusCircle,
+  BarChart3,
+  Info,
 } from 'lucide-react';
 import { AugmentationSettingsPanel } from './AugmentationSettings';
 import { useNoiseFiles } from '../hooks/useNoiseFiles';
@@ -38,7 +39,10 @@ interface TrainDataAugmenterProps {
 
 interface AugmentationProgress {
   isProcessing: boolean;
+  currentClass: string;
   currentFile: string;
+  processedClasses: number;
+  totalClasses: number;
   processedFiles: number;
   totalFiles: number;
   generatedFiles: number;
@@ -50,55 +54,48 @@ export function TrainDataAugmenter({
   getLabel,
   onAugmentationComplete,
 }: TrainDataAugmenterProps) {
-  // バランス調整（不足分の生成）用 拡張設定
-  const [balanceSettings, setBalanceSettings] = useState<AugmentationSettings>({
+  // 統合された拡張設定
+  const [settings, setSettings] = useState<AugmentationSettings>({
     ...defaultSettings,
-    environmentNoise: {
-      ...defaultSettings.environmentNoise,
-      enabled: false, // デフォルトはオフ
-    },
-  });
-
-  // 追加拡張（Train全体へ一律）用 拡張設定
-  const [extraSettings, setExtraSettings] = useState<AugmentationSettings>({
-    ...defaultSettings,
-    // 追加拡張は軽めがデフォルト
-    timeShift: { ...defaultSettings.timeShift, enabled: true, variations: 1 },
-    gainVariation: { ...defaultSettings.gainVariation, enabled: true, variations: 1 },
+    timeShift: { ...defaultSettings.timeShift, enabled: true, variations: 2 },
+    gainVariation: { ...defaultSettings.gainVariation, enabled: true, variations: 2 },
     environmentNoise: { ...defaultSettings.environmentNoise, enabled: false },
     pitchShift: { ...defaultSettings.pitchShift, enabled: false },
     timeStretch: { ...defaultSettings.timeStretch, enabled: false },
   });
-  const [enableExtraAugmentation, setEnableExtraAugmentation] = useState(true);
-  // 追加拡張の対象：既に拡張されたファイル（_aug/_timeshift等）を含めるか
-  const [includeAlreadyAugmented, setIncludeAlreadyAugmented] = useState(false);
-  
+
   // クラスバランシング設定
   const [enableBalancing, setEnableBalancing] = useState(true);
   const [balanceMode, setBalanceMode] = useState<'max' | 'median' | 'custom'>('max');
   const [customTarget, setCustomTarget] = useState(100);
-  
+
+  // 追加拡張設定
+  const [enableExtraAugmentation, setEnableExtraAugmentation] = useState(true);
+  const [applyExtraToBalanced, setApplyExtraToBalanced] = useState(false);
+
   // UI状態
   const [isExpanded, setIsExpanded] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [progress, setProgress] = useState<AugmentationProgress>({
     isProcessing: false,
+    currentClass: '',
     currentFile: '',
+    processedClasses: 0,
+    totalClasses: 0,
     processedFiles: 0,
     totalFiles: 0,
     generatedFiles: 0,
     status: '',
   });
-  const [phase, setPhase] = useState<'idle' | 'balanced' | 'extra_done'>('idle');
   const [isComplete, setIsComplete] = useState(false);
-  const [balancedTrainFiles, setBalancedTrainFiles] = useState<FileInfo[] | null>(null);
-  
+
   // ノイズファイル
   const {
     filteredEntries,
     isReady: isNoiseReady,
     loadRandomSamples,
   } = useNoiseFiles();
-  
+
   // クラス分布を計算
   const classDistribution = useMemo(() => {
     const dist = new Map<string, number>();
@@ -108,7 +105,7 @@ export function TrainDataAugmenter({
     }
     return dist;
   }, [trainFiles, getLabel]);
-  
+
   // ファイルをクラスごとにグループ化
   const filesByClass = useMemo(() => {
     const groups = new Map<string, FileInfo[]>();
@@ -120,17 +117,17 @@ export function TrainDataAugmenter({
     }
     return groups;
   }, [trainFiles, getLabel]);
-  
+
   const classes = Array.from(classDistribution.keys()).sort();
   const counts = Array.from(classDistribution.values());
-  const maxCount = Math.max(...counts);
-  const minCount = Math.min(...counts);
+  const maxCount = counts.length > 0 ? Math.max(...counts) : 0;
+  const minCount = counts.length > 0 ? Math.min(...counts) : 0;
   const medianCount = counts.length > 0
     ? [...counts].sort((a, b) => a - b)[Math.floor(counts.length / 2)]
     : 0;
   const imbalanceRatio = minCount > 0 ? maxCount / minCount : Infinity;
   const isImbalanced = imbalanceRatio > 1.5;
-  
+
   // ターゲット数を計算
   const getTargetCount = () => {
     switch (balanceMode) {
@@ -140,35 +137,65 @@ export function TrainDataAugmenter({
       default: return maxCount;
     }
   };
-  
+
   const targetCount = getTargetCount();
-  
-  // 必要な拡張数を計算
+
+  // 拡張計画を計算
   const augmentationPlan = useMemo(() => {
-    if (!enableBalancing) {
-      // バランシング無効の場合は拡張のみ
-      return classes.map(cls => ({
-        className: cls,
-        currentCount: classDistribution.get(cls) || 0,
-        neededAugmentations: 0,
-        files: filesByClass.get(cls) || [],
-      }));
-    }
-    
     return classes.map(cls => {
       const currentCount = classDistribution.get(cls) || 0;
-      const needed = Math.max(0, targetCount - currentCount);
+      const files = filesByClass.get(cls) || [];
+
+      // バランス調整で必要な数
+      const balanceNeeded = enableBalancing
+        ? Math.max(0, targetCount - currentCount)
+        : 0;
+
+      // 追加拡張で生成される数
+      let extraCount = 0;
+      if (enableExtraAugmentation) {
+        // 追加拡張の対象ファイル数を計算
+        const baseFilesToAugment = applyExtraToBalanced
+          ? currentCount + balanceNeeded  // バランス後の全ファイル
+          : currentCount;                  // 元のファイルのみ
+
+        // 各拡張タイプのバリエーション数を合計
+        let variationsPerFile = 0;
+        if (settings.timeShift.enabled) variationsPerFile += settings.timeShift.variations;
+        if (settings.gainVariation.enabled) variationsPerFile += settings.gainVariation.variations;
+        if (settings.environmentNoise.enabled && isNoiseReady) variationsPerFile += settings.environmentNoise.variations;
+        if (settings.pitchShift.enabled) variationsPerFile += settings.pitchShift.variations;
+        if (settings.timeStretch.enabled) variationsPerFile += settings.timeStretch.variations;
+
+        extraCount = baseFilesToAugment * variationsPerFile;
+      }
+
       return {
         className: cls,
         currentCount,
-        neededAugmentations: needed,
-        files: filesByClass.get(cls) || [],
+        balanceNeeded,
+        extraCount,
+        totalAfter: currentCount + balanceNeeded + extraCount,
+        files,
       };
     });
-  }, [classes, classDistribution, filesByClass, enableBalancing, targetCount]);
-  
-  const totalNeeded = augmentationPlan.reduce((sum, p) => sum + p.neededAugmentations, 0);
-  
+  }, [
+    classes,
+    classDistribution,
+    filesByClass,
+    enableBalancing,
+    targetCount,
+    enableExtraAugmentation,
+    applyExtraToBalanced,
+    settings,
+    isNoiseReady,
+  ]);
+
+  const totalBalanceNeeded = augmentationPlan.reduce((sum, p) => sum + p.balanceNeeded, 0);
+  const totalExtraCount = augmentationPlan.reduce((sum, p) => sum + p.extraCount, 0);
+  const totalGenerated = totalBalanceNeeded + totalExtraCount;
+  const finalTotal = trainFiles.length + totalGenerated;
+
   // WAVファイルをAudioBufferに変換
   const fileToAudioBuffer = async (file: File): Promise<AudioBuffer> => {
     const arrayBuffer = await file.arrayBuffer();
@@ -177,237 +204,188 @@ export function TrainDataAugmenter({
     await audioContext.close();
     return audioBuffer;
   };
-  
-  // ランダム値生成
-  // @ts-expect-error - Reserved for future use
-  const randomInRange = (min: number, max: number) => min + Math.random() * (max - min);
-  
+
   /**
-   * バランス調整（不足分だけ生成）
+   * 統合された拡張処理
+   * クラスごとに、バランス調整と追加拡張を一度に実行
    */
-  const executeBalanceAugmentation = useCallback(async () => {
+  const executeAugmentation = useCallback(async () => {
     setProgress({
       isProcessing: true,
+      currentClass: '',
       currentFile: '',
+      processedClasses: 0,
+      totalClasses: classes.length,
       processedFiles: 0,
       totalFiles: trainFiles.length,
       generatedFiles: 0,
-      status: 'バランス調整（不足分の生成）を開始しています...',
+      status: 'データ拡張を開始しています...',
     });
     setIsComplete(false);
-    setPhase('idle');
-    
-    const augmentedFiles: FileInfo[] = [...trainFiles]; // 元データも含む
+
+    const resultFiles: FileInfo[] = [...trainFiles]; // 元データも含む
     let totalGenerated = 0;
-    
+
     // ノイズサンプルを読み込む
     let noiseSamples: NoiseSample[] | undefined;
-    if (balanceSettings.environmentNoise.enabled && isNoiseReady) {
+    if (settings.environmentNoise.enabled && isNoiseReady) {
       noiseSamples = await loadRandomSamples(20);
     }
-    
+
     // クラスごとに処理
-    for (const plan of augmentationPlan) {
-      const { className, neededAugmentations, files } = plan;
-      
-      // バランス調整をしない場合はこのフェーズでは何もしない
-      if (!enableBalancing || neededAugmentations <= 0) continue;
-      
+    for (let classIdx = 0; classIdx < augmentationPlan.length; classIdx++) {
+      const plan = augmentationPlan[classIdx];
+      const { className, balanceNeeded, files } = plan;
+
       if (files.length === 0) continue;
-      
+
       setProgress(prev => ({
         ...prev,
-        status: `クラス "${className}" を処理中（不足分を生成）...`,
+        currentClass: className,
+        processedClasses: classIdx,
+        status: `クラス "${className}" を処理中...`,
       }));
-      
-      let classGenerated = 0;
-      let fileIndex = 0;
-      
-      while (classGenerated < neededAugmentations) {
-        const fileInfo = files[fileIndex % files.length];
-        
-        setProgress(prev => ({
-          ...prev,
-          currentFile: fileInfo.file.name,
-          processedFiles: prev.processedFiles + 1,
-        }));
-        
-        try {
-          const audioBuffer = await fileToAudioBuffer(fileInfo.file);
-          const samples = audioBufferToMono(audioBuffer);
-          const sampleRate = audioBuffer.sampleRate;
-          const baseName = fileInfo.file.name.replace(/\.wav$/i, '');
-          
-          // 拡張を生成
-          const augmentations = generateAugmentations(
-            samples,
-            sampleRate,
-            balanceSettings,
-            `${baseName}_aug${classGenerated}`,
-            noiseSamples
-          );
-          
-          // オリジナルを除外（既にtrainFilesに含まれている）
-          const newAugmentations = augmentations.filter(a => !a.name.includes('_original'));
-          
-          for (const aug of newAugmentations) {
-            if (classGenerated >= neededAugmentations) break;
-            
-            const blob = samplesToWavBlob(aug.samples, sampleRate);
-            const augFile = new File([blob], aug.name, { type: 'audio/wav' });
-            
-            augmentedFiles.push({
-              file: augFile,
-              path: `${fileInfo.path.replace(/[^/]+$/, '')}${aug.name}`,
-              folderName: fileInfo.folderName,
-            });
-            
-            classGenerated++;
-            totalGenerated++;
-            
-            setProgress(prev => ({
-              ...prev,
-              generatedFiles: totalGenerated,
-            }));
+
+      // フェーズ1: バランス調整（不足分のみ生成）
+      const balancedFiles: FileInfo[] = [];
+      if (enableBalancing && balanceNeeded > 0) {
+        let classGenerated = 0;
+        let fileIndex = 0;
+
+        while (classGenerated < balanceNeeded && files.length > 0) {
+          const fileInfo = files[fileIndex % files.length];
+
+          setProgress(prev => ({
+            ...prev,
+            currentFile: fileInfo.file.name,
+            processedFiles: prev.processedFiles + 1,
+          }));
+
+          try {
+            const audioBuffer = await fileToAudioBuffer(fileInfo.file);
+            const samples = audioBufferToMono(audioBuffer);
+            const sampleRate = audioBuffer.sampleRate;
+            const baseName = fileInfo.file.name.replace(/\.wav$/i, '');
+
+            // バランス調整用の拡張を生成
+            const augmentations = generateAugmentations(
+              samples,
+              sampleRate,
+              settings,
+              `${baseName}_bal${classGenerated}`,
+              noiseSamples
+            ).filter(a => !a.name.includes('_original')); // オリジナルを除外
+
+            for (const aug of augmentations) {
+              if (classGenerated >= balanceNeeded) break;
+
+              const blob = samplesToWavBlob(aug.samples, sampleRate);
+              const augFile = new File([blob], aug.name, { type: 'audio/wav' });
+
+              const newFileInfo: FileInfo = {
+                file: augFile,
+                path: `${fileInfo.path.replace(/[^/]+$/, '')}${aug.name}`,
+                folderName: fileInfo.folderName,
+              };
+
+              balancedFiles.push(newFileInfo);
+              resultFiles.push(newFileInfo);
+
+              classGenerated++;
+              totalGenerated++;
+
+              setProgress(prev => ({
+                ...prev,
+                generatedFiles: totalGenerated,
+              }));
+            }
+          } catch (err) {
+            console.warn(`Failed to augment ${fileInfo.file.name}:`, err);
           }
-        } catch (err) {
-          console.warn(`Failed to augment ${fileInfo.file.name}:`, err);
-        }
-        
-        fileIndex++;
-        
-        // 無限ループ防止
-        if (fileIndex > files.length * 10 && classGenerated < neededAugmentations) {
-          console.warn(`Could not generate enough augmentations for class "${className}"`);
-          break;
+
+          fileIndex++;
+
+          // 無限ループ防止
+          if (fileIndex > files.length * 20 && classGenerated < balanceNeeded) {
+            console.warn(`Could not generate enough augmentations for class "${className}"`);
+            break;
+          }
         }
       }
-    }
-    
-    setProgress(prev => ({
-      ...prev,
-      isProcessing: false,
-      status: enableBalancing
-        ? `バランス調整が完了しました（${totalGenerated} ファイルを生成）`
-        : 'バランス調整はスキップしました',
-    }));
-    setBalancedTrainFiles(augmentedFiles);
-    setPhase('balanced');
-  }, [
-    trainFiles,
-    augmentationPlan,
-    balanceSettings,
-    isNoiseReady,
-    loadRandomSamples,
-    enableBalancing,
-  ]);
 
-  /**
-   * 追加拡張（Train全体へ一律に適用）
-   * - データリーク防止のため Train のみに実施
-   */
-  const executeExtraAugmentation = useCallback(async () => {
-    const baseFiles = balancedTrainFiles || trainFiles;
-    if (!enableExtraAugmentation) return;
+      // フェーズ2: 追加拡張（元ファイルまたはバランス後の全ファイル）
+      if (enableExtraAugmentation) {
+        const filesToAugment = applyExtraToBalanced
+          ? [...files, ...balancedFiles]  // バランス後の全ファイル
+          : files;                         // 元のファイルのみ
 
-    setProgress({
-      isProcessing: true,
-      currentFile: '',
-      processedFiles: 0,
-      totalFiles: baseFiles.length,
-      generatedFiles: 0,
-      status: '追加のデータ拡張を開始しています...',
-    });
-    setIsComplete(false);
+        for (const fileInfo of filesToAugment) {
+          setProgress(prev => ({
+            ...prev,
+            currentFile: fileInfo.file.name,
+            processedFiles: prev.processedFiles + 1,
+          }));
 
-    const resultFiles: FileInfo[] = [...baseFiles];
-    let totalGenerated = 0;
+          try {
+            const audioBuffer = await fileToAudioBuffer(fileInfo.file);
+            const samples = audioBufferToMono(audioBuffer);
+            const sampleRate = audioBuffer.sampleRate;
+            const baseName = fileInfo.file.name.replace(/\.wav$/i, '');
 
-    let noiseSamples: NoiseSample[] | undefined;
-    if (extraSettings.environmentNoise.enabled && isNoiseReady) {
-      noiseSamples = await loadRandomSamples(20);
-    }
+            const augmentations = generateAugmentations(
+              samples,
+              sampleRate,
+              settings,
+              baseName,
+              noiseSamples
+            ).filter(a => !a.name.includes('_original'));
 
-    const shouldSkipAsAlreadyAugmented = (name: string) => {
-      if (includeAlreadyAugmented) return false;
-      return /_(aug|timeshift|gain|envnoise|pitch|stretch)_/i.test(name) || /_aug\d+/i.test(name);
-    };
+            for (const aug of augmentations) {
+              const blob = samplesToWavBlob(aug.samples, sampleRate);
+              const augFile = new File([blob], aug.name, { type: 'audio/wav' });
 
-    for (let i = 0; i < baseFiles.length; i++) {
-      const fileInfo = baseFiles[i];
+              resultFiles.push({
+                file: augFile,
+                path: `${fileInfo.path.replace(/[^/]+$/, '')}${aug.name}`,
+                folderName: fileInfo.folderName,
+              });
+
+              totalGenerated++;
+              setProgress(prev => ({ ...prev, generatedFiles: totalGenerated }));
+            }
+          } catch (err) {
+            console.warn(`Failed to extra-augment ${fileInfo.file.name}:`, err);
+          }
+        }
+      }
 
       setProgress(prev => ({
         ...prev,
-        currentFile: fileInfo.file.name,
-        processedFiles: i + 1,
+        processedClasses: classIdx + 1,
       }));
-
-      if (shouldSkipAsAlreadyAugmented(fileInfo.file.name)) {
-        continue;
-      }
-
-      try {
-        const audioBuffer = await fileToAudioBuffer(fileInfo.file);
-        const samples = audioBufferToMono(audioBuffer);
-        const sampleRate = audioBuffer.sampleRate;
-        const baseName = fileInfo.file.name.replace(/\.wav$/i, '');
-
-        const augmentations = generateAugmentations(
-          samples,
-          sampleRate,
-          extraSettings,
-          `${baseName}_extra`,
-          noiseSamples
-        ).filter(a => !a.name.includes('_original'));
-
-        for (const aug of augmentations) {
-          const blob = samplesToWavBlob(aug.samples, sampleRate);
-          const augFile = new File([blob], aug.name, { type: 'audio/wav' });
-
-          resultFiles.push({
-            file: augFile,
-            path: `${fileInfo.path.replace(/[^/]+$/, '')}${aug.name}`,
-            folderName: fileInfo.folderName,
-          });
-
-          totalGenerated++;
-          setProgress(prev => ({ ...prev, generatedFiles: totalGenerated }));
-        }
-      } catch (err) {
-        console.warn(`Failed to extra-augment ${fileInfo.file.name}:`, err);
-      }
     }
 
     setProgress(prev => ({
       ...prev,
       isProcessing: false,
-      status: `追加拡張が完了しました（${totalGenerated} ファイルを生成）`,
+      status: `データ拡張が完了しました（${totalGenerated} ファイルを生成）`,
     }));
 
-    setPhase('extra_done');
     setIsComplete(true);
     onAugmentationComplete(resultFiles);
   }, [
-    balancedTrainFiles,
     trainFiles,
-    enableExtraAugmentation,
-    extraSettings,
+    classes,
+    augmentationPlan,
+    settings,
     isNoiseReady,
     loadRandomSamples,
-    includeAlreadyAugmented,
+    enableBalancing,
+    enableExtraAugmentation,
+    applyExtraToBalanced,
     onAugmentationComplete,
   ]);
 
-  const finalizeWithoutExtra = useCallback(() => {
-    const baseFiles = balancedTrainFiles || trainFiles;
-    setPhase('extra_done');
-    setIsComplete(true);
-    onAugmentationComplete(baseFiles);
-  }, [balancedTrainFiles, trainFiles, onAugmentationComplete]);
-  
-  // 予想される拡張後のファイル数を計算
-  const estimatedTotal = trainFiles.length + totalNeeded;
-  
   return (
     <div className="bg-zinc-800/50 rounded-xl border border-zinc-700 overflow-hidden">
       {/* ヘッダー */}
@@ -422,7 +400,7 @@ export function TrainDataAugmenter({
           <div className="text-left">
             <h3 className="font-semibold text-white">訓練データの拡張</h3>
             <p className="text-sm text-zinc-400">
-              Train分割のみを対象にデータ拡張・クラス分布調整
+              クラス分布の調整とデータ拡張を統合的に実行
             </p>
           </div>
         </div>
@@ -440,7 +418,7 @@ export function TrainDataAugmenter({
           )}
         </div>
       </button>
-      
+
       {isExpanded && (
         <div className="p-4 pt-0 space-y-4">
           {/* クラス分布の警告 */}
@@ -449,15 +427,59 @@ export function TrainDataAugmenter({
               <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-sm text-amber-300 font-medium">
-                  クラス不均衡が検出されました（比率: {imbalanceRatio.toFixed(1)}）
+                  クラス不均衡が検出されました（比率: {imbalanceRatio.toFixed(1)}x）
                 </p>
                 <p className="text-xs text-amber-400/80 mt-1">
-                  クラス分布を揃えることで、モデルの偏りを防ぎます。
+                  最大 {maxCount} ファイル vs 最小 {minCount} ファイル
                 </p>
               </div>
             </div>
           )}
-          
+
+          {/* 現在のクラス分布 */}
+          <div className="p-4 rounded-lg bg-zinc-900/50 space-y-3">
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <BarChart3 className="w-4 h-4" />
+              現在のクラス分布
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+              {augmentationPlan.map((plan) => {
+                const percentage = maxCount > 0 ? ((plan.currentCount / maxCount) * 100).toFixed(0) : '0';
+                const isMin = plan.currentCount === minCount;
+                const isMax = plan.currentCount === maxCount;
+                return (
+                  <div
+                    key={plan.className}
+                    className={`
+                      bg-zinc-800/50 rounded-lg p-2 border
+                      ${isMin ? 'border-red-500/50' : isMax ? 'border-emerald-500/50' : 'border-zinc-700'}
+                    `}
+                  >
+                    <div className="text-xs text-zinc-400 truncate" title={plan.className}>
+                      {plan.className}
+                    </div>
+                    <div className="flex items-baseline gap-1 mt-1">
+                      <span className={`text-lg font-bold ${isMin ? 'text-red-400' : isMax ? 'text-emerald-400' : 'text-white'}`}>
+                        {plan.currentCount}
+                      </span>
+                      {plan.totalAfter > plan.currentCount && (
+                        <span className="text-xs text-violet-400">
+                          → {plan.totalAfter}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 h-1 bg-zinc-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full ${isMin ? 'bg-red-500' : isMax ? 'bg-emerald-500' : 'bg-violet-500'}`}
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* クラスバランシング設定 */}
           <div className="p-4 rounded-lg bg-zinc-900/50 space-y-3">
             <div className="flex items-center justify-between">
@@ -475,30 +497,29 @@ export function TrainDataAugmenter({
                 <div className="w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
               </label>
             </div>
-            
+
             {enableBalancing && (
               <div className="space-y-3 pt-2">
                 <div className="grid grid-cols-3 gap-2">
                   {[
                     { mode: 'max' as const, label: '最大に揃える', value: maxCount },
-                    { mode: 'median' as const, label: '中央値に揃える', value: medianCount },
+                    { mode: 'median' as const, label: '中央値', value: medianCount },
                     { mode: 'custom' as const, label: 'カスタム', value: customTarget },
                   ].map((option) => (
                     <button
                       key={option.mode}
                       onClick={() => setBalanceMode(option.mode)}
-                      className={`p-2 rounded-lg border transition-all text-center ${
-                        balanceMode === option.mode
+                      className={`p-2 rounded-lg border transition-all text-center ${balanceMode === option.mode
                           ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
                           : 'border-zinc-700 hover:border-zinc-600 text-zinc-400'
-                      }`}
+                        }`}
                     >
                       <div className="text-xs">{option.label}</div>
                       <div className="text-lg font-bold">{option.value}</div>
                     </button>
                   ))}
                 </div>
-                
+
                 {balanceMode === 'custom' && (
                   <div className="flex items-center gap-2">
                     <label className="text-sm text-zinc-400">目標数:</label>
@@ -511,81 +532,104 @@ export function TrainDataAugmenter({
                     />
                   </div>
                 )}
-                
-                <div className="text-sm text-zinc-400">
-                  <span className="text-violet-400 font-medium">{totalNeeded}</span> ファイルを生成
-                  → 合計 <span className="text-white font-medium">{estimatedTotal}</span> ファイル
+              </div>
+            )}
+          </div>
+
+          {/* 追加拡張設定 */}
+          <div className="p-4 rounded-lg bg-zinc-900/50 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-sky-400" />
+                <span className="text-sm font-medium text-white">追加のデータ拡張</span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableExtraAugmentation}
+                  onChange={(e) => setEnableExtraAugmentation(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
+              </label>
+            </div>
+
+            {enableExtraAugmentation && (
+              <div className="space-y-2">
+                <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+                  <input
+                    type="checkbox"
+                    id="applyExtraToBalanced"
+                    checked={applyExtraToBalanced}
+                    onChange={(e) => setApplyExtraToBalanced(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-sky-500"
+                  />
+                  <label htmlFor="applyExtraToBalanced" className="text-sm text-zinc-300 cursor-pointer">
+                    バランス調整後のファイルにも適用
+                    <span className="block text-xs text-zinc-500 mt-0.5">
+                      オフ: 元のファイルのみ拡張 / オン: バランス後の全ファイルを拡張
+                    </span>
+                  </label>
                 </div>
               </div>
             )}
           </div>
-          
-          {/* 拡張設定 */}
-          <details className="group">
-            <summary className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 p-2">
+
+          {/* 拡張設定の詳細 */}
+          <details className="group" open={showAdvanced}>
+            <summary
+              onClick={(e) => {
+                e.preventDefault();
+                setShowAdvanced(!showAdvanced);
+              }}
+              className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 p-2 rounded hover:bg-zinc-800/50"
+            >
               <Sparkles className="w-4 h-4" />
               拡張の詳細設定
+              {showAdvanced ? <ChevronUp className="w-4 h-4 ml-auto" /> : <ChevronDown className="w-4 h-4 ml-auto" />}
             </summary>
-            <div className="mt-3">
-              <AugmentationSettingsPanel
-                settings={balanceSettings}
-                onChange={setBalanceSettings}
-                noiseFileCount={filteredEntries.length}
-                isNoiseReady={isNoiseReady}
-              />
-            </div>
+            {showAdvanced && (
+              <div className="mt-3">
+                <AugmentationSettingsPanel
+                  settings={settings}
+                  onChange={setSettings}
+                  noiseFileCount={filteredEntries.length}
+                  isNoiseReady={isNoiseReady}
+                />
+              </div>
+            )}
           </details>
 
-          {/* 追加拡張ステップ */}
-          {phase === 'balanced' && (
-            <div className="p-4 rounded-lg bg-zinc-900/50 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <PlusCircle className="w-4 h-4 text-sky-400" />
-                  <span className="text-sm font-medium text-white">追加のデータ拡張（Train全体）</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enableExtraAugmentation}
-                    onChange={(e) => setEnableExtraAugmentation(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-500"></div>
-                </label>
-              </div>
-
-              {enableExtraAugmentation && (
-                <>
-                  <div className="flex items-center justify-between text-sm">
-                    <label className="text-zinc-400">拡張済みファイルも対象にする</label>
-                    <input
-                      type="checkbox"
-                      checked={includeAlreadyAugmented}
-                      onChange={(e) => setIncludeAlreadyAugmented(e.target.checked)}
-                      className="h-4 w-4 accent-sky-500"
-                    />
-                  </div>
-
-                  <details className="group">
-                    <summary className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-300 p-2">
-                      <Sparkles className="w-4 h-4" />
-                      追加拡張の詳細設定
-                    </summary>
-                    <div className="mt-3">
-                      <AugmentationSettingsPanel
-                        settings={extraSettings}
-                        onChange={setExtraSettings}
-                        noiseFileCount={filteredEntries.length}
-                        isNoiseReady={isNoiseReady}
-                      />
-                    </div>
-                  </details>
-                </>
-              )}
+          {/* 拡張計画のサマリー */}
+          <div className="p-4 rounded-lg bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 border border-violet-500/30">
+            <div className="flex items-center gap-2 mb-3">
+              <Info className="w-5 h-5 text-violet-400" />
+              <span className="text-white font-medium">拡張計画</span>
             </div>
-          )}
-          
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <span className="text-zinc-400">元のファイル:</span>
+                <span className="text-white ml-2 font-medium">{trainFiles.length}</span>
+              </div>
+              {enableBalancing && (
+                <div>
+                  <span className="text-zinc-400">バランス調整:</span>
+                  <span className="text-emerald-400 ml-2 font-medium">+{totalBalanceNeeded}</span>
+                </div>
+              )}
+              {enableExtraAugmentation && (
+                <div>
+                  <span className="text-zinc-400">追加拡張:</span>
+                  <span className="text-sky-400 ml-2 font-medium">+{totalExtraCount}</span>
+                </div>
+              )}
+              <div className="col-span-2 pt-2 border-t border-zinc-700">
+                <span className="text-zinc-400">最終的な合計:</span>
+                <span className="text-violet-300 ml-2 font-bold text-lg">{finalTotal} ファイル</span>
+              </div>
+            </div>
+          </div>
+
           {/* 進捗表示 */}
           {progress.isProcessing && (
             <div className="p-4 rounded-lg bg-zinc-900/50 space-y-2">
@@ -594,24 +638,30 @@ export function TrainDataAugmenter({
                 <span className="text-sm text-white">{progress.status}</span>
               </div>
               <div className="text-xs text-zinc-500">
-                {progress.currentFile && `処理中: ${progress.currentFile}`}
+                クラス: {progress.currentClass} ({progress.processedClasses}/{progress.totalClasses})
               </div>
+              {progress.currentFile && (
+                <div className="text-xs text-zinc-500 truncate">
+                  処理中: {progress.currentFile}
+                </div>
+              )}
               <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-violet-500 transition-all"
+                  className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all"
                   style={{
-                    width: `${
-                      ((progress.processedFiles / Math.max(1, progress.totalFiles)) * 100)
-                    }%`,
+                    width: `${progress.totalClasses > 0
+                        ? (progress.processedClasses / progress.totalClasses) * 100
+                        : 0
+                      }%`,
                   }}
                 />
               </div>
               <div className="text-xs text-zinc-400">
-                生成済み: {progress.generatedFiles} ファイル
+                生成済み: {progress.generatedFiles} / {totalGenerated} ファイル
               </div>
             </div>
           )}
-          
+
           {/* 完了メッセージ */}
           {isComplete && !progress.isProcessing && (
             <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2">
@@ -619,17 +669,16 @@ export function TrainDataAugmenter({
               <span className="text-sm text-emerald-300">{progress.status}</span>
             </div>
           )}
-          
-          {/* 実行ボタン（2段階） */}
-          {phase === 'idle' && (
+
+          {/* 実行ボタン */}
+          {!isComplete && (
             <button
-              onClick={executeBalanceAugmentation}
+              onClick={executeAugmentation}
               disabled={progress.isProcessing || trainFiles.length === 0}
-              className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
-                progress.isProcessing || trainFiles.length === 0
+              className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${progress.isProcessing || trainFiles.length === 0
                   ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                  : 'bg-violet-500 hover:bg-violet-600 text-white'
-              }`}
+                  : 'bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white shadow-lg'
+                }`}
             >
               {progress.isProcessing ? (
                 <>
@@ -638,66 +687,14 @@ export function TrainDataAugmenter({
                 </>
               ) : (
                 <>
-                  <Scale className="w-5 h-5" />
-                  バランス調整を実行
+                  <Sparkles className="w-5 h-5" />
+                  データ拡張を実行
                 </>
               )}
             </button>
-          )}
-
-          {phase === 'balanced' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <button
-                onClick={() => {
-                  if (enableExtraAugmentation) void executeExtraAugmentation();
-                  else finalizeWithoutExtra();
-                }}
-                disabled={progress.isProcessing}
-                className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
-                  progress.isProcessing
-                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                    : 'bg-sky-500 hover:bg-sky-600 text-white'
-                }`}
-              >
-                {progress.isProcessing ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    処理中...
-                  </>
-                ) : enableExtraAugmentation ? (
-                  <>
-                    <Sparkles className="w-5 h-5" />
-                    追加拡張を実行して完了
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-5 h-5" />
-                    追加拡張なしで完了
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => {
-                  // バランス調整からやり直す
-                  setBalancedTrainFiles(null);
-                  setPhase('idle');
-                  setIsComplete(false);
-                }}
-                disabled={progress.isProcessing}
-                className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
-                  progress.isProcessing
-                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                    : 'bg-zinc-700 hover:bg-zinc-600 text-white'
-                }`}
-              >
-                再設定（バランス調整から）
-              </button>
-            </div>
           )}
         </div>
       )}
     </div>
   );
 }
-

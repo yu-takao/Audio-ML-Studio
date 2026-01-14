@@ -161,7 +161,7 @@ def load_tfjs_model(model_dir: str) -> tf.keras.Model:
     )
 
 
-def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
+def prepare_dataset(data_dir: str, problem_type: str = 'classification') -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
     """データセットを準備"""
     X_list = []
     y_list = []
@@ -176,7 +176,7 @@ def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], L
     
     print(f"Found {len(wav_files)} WAV files")
     
-    # クラス名からインデックスへのマッピング
+    # クラス名からインデックスへのマッピング（分類の場合のみ使用）
     class_to_idx = {name: idx for idx, name in enumerate(CLASS_NAMES)}
     
     for wav_file in wav_files:
@@ -196,8 +196,10 @@ def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], L
                 # トリミング
                 mel_spec = mel_spec[:, :INPUT_WIDTH]
             
-            # 正規化
-            mel_spec = (mel_spec - mel_spec.mean()) / (mel_spec.std() + 1e-8)
+            # 正規化 (-80dB to 0dB -> 0 to 1) - train.pyと同じ方式
+            mel_spec = (mel_spec + 80) / 80
+            mel_spec = np.clip(mel_spec, 0, 1)
+
             
             # (H, W, C) 形式に変換
             mel_spec = mel_spec[:INPUT_HEIGHT, :INPUT_WIDTH]
@@ -207,13 +209,25 @@ def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], L
             metadata = parse_filename(wav_file.name)
             class_label = generate_class_label(metadata, TARGET_FIELD, AUXILIARY_FIELDS)
             
-            if class_label in class_to_idx:
-                X_list.append(mel_spec)
-                y_list.append(class_to_idx[class_label])
-                file_list.append(wav_file.name)
-                label_list.append(class_label)
+            if problem_type == 'regression':
+                try:
+                    # 回帰の場合はラベルを数値に変換
+                    float_val = float(class_label)
+                    X_list.append(mel_spec)
+                    y_list.append(float_val)
+                    file_list.append(wav_file.name)
+                    label_list.append(class_label)
+                except ValueError:
+                    print(f"Warning: Could not parse label '{class_label}' as float for file {wav_file.name}")
             else:
-                print(f"Warning: Unknown class '{class_label}' for file {wav_file.name}")
+                # 分類の場合
+                if class_label in class_to_idx:
+                    X_list.append(mel_spec)
+                    y_list.append(class_to_idx[class_label])
+                    file_list.append(wav_file.name)
+                    label_list.append(class_label)
+                else:
+                    print(f"Warning: Unknown class '{class_label}' for file {wav_file.name}")
                 
         except Exception as e:
             print(f"Error processing {wav_file}: {e}")
@@ -223,7 +237,10 @@ def prepare_dataset(data_dir: str) -> Tuple[np.ndarray, np.ndarray, List[str], L
         raise ValueError("No valid samples found")
     
     X = np.array(X_list, dtype=np.float32)
-    y = np.array(y_list, dtype=np.int32)
+    if problem_type == 'regression':
+        y = np.array(y_list, dtype=np.float32)
+    else:
+        y = np.array(y_list, dtype=np.int32)
     
     print(f"Prepared dataset: X shape={X.shape}, y shape={y.shape}")
     
@@ -289,13 +306,24 @@ def save_results(metrics: Dict, file_predictions: List[Dict], output_dir: str):
     
     # サマリーを出力
     print("\n=== Evaluation Results ===")
-    print(f"Accuracy: {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall: {metrics['recall']:.4f}")
-    print(f"F1 Score: {metrics['f1_score']:.4f}")
-    print("\nClass-wise metrics:")
-    for cm in metrics['class_metrics']:
-        print(f"  {cm['class_name']}: F1={cm['f1_score']:.4f}, Support={cm['support']}")
+    if 'accuracy' in metrics:
+        print(f"Accuracy: {metrics['accuracy']:.4f}")
+    if 'precision' in metrics:
+        print(f"Precision: {metrics['precision']:.4f}")
+    if 'recall' in metrics:
+        print(f"Recall: {metrics['recall']:.4f}")
+    if 'f1_score' in metrics:
+        print(f"F1 Score: {metrics['f1_score']:.4f}")
+    
+    if 'mae' in metrics:
+        print(f"MAE: {metrics['mae']:.4f}")
+    if 'mse' in metrics:
+        print(f"MSE: {metrics['mse']:.4f}")
+        
+    if 'class_metrics' in metrics and metrics['class_metrics']:
+        print("\nClass-wise metrics:")
+        for cm in metrics['class_metrics']:
+            print(f"  {cm['class_name']}: F1={cm['f1_score']:.4f}, Support={cm['support']}")
 
 
 def main():
@@ -355,7 +383,7 @@ def main():
         
         # データセットを準備
         print("\nPreparing dataset...")
-        X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR)
+        X, y_true, file_list, label_list = prepare_dataset(INPUT_DATA_DIR, problem_type)
         
         # 予測（問題タイプに応じて処理）
         print("\nRunning inference...")
