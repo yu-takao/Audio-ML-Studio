@@ -269,54 +269,40 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
 
         setS3Datasets(datasets);
         console.log(`Loaded ${datasets.length} datasets from index file`);
-      } catch (indexErr) {
+        return; // 成功したらここで終了
+      } catch (indexErr: any) {
         // インデックスファイルが存在しない場合は、従来の方法で取得（後方互換性）
-        console.warn('Index file not found, falling back to full scan:', indexErr);
+        // 404エラーは無視してフォールバック処理を続行
+        if (indexErr?.$metadata?.httpStatusCode === 404 || indexErr?.name === 'NotFound') {
+          console.log('Index file not found, falling back to scanning folders');
+        } else {
+          console.warn('Failed to load index file, falling back to full scan:', indexErr);
+        }
         
-        // public/training-data/ 以下のフォルダのみを取得（ファイルではなくフォルダ）
+        // public/training-data/ 以下の全ファイルを取得（従来の方法）
         const result = await list({
           path: `public/training-data/${userId}/`,
           options: {
-            listAll: false, // フォルダレベルのみ
+            listAll: true, // 全ファイルを取得
           },
         });
 
         // フォルダごとにグループ化
         const datasetMap = new Map<string, { files: number; size: number; lastModified: Date }>();
 
-        // 各フォルダ（データセット）を処理
+        // 各ファイルを処理してデータセットごとにグループ化
         for (const item of result.items) {
-          if (item.path.endsWith('/')) {
-            // フォルダの場合、そのフォルダ内のファイル数を取得
-            try {
-              const folderFiles = await list({
-                path: item.path,
-                options: {
-                  listAll: true,
-                },
-              });
-
-              const datasetPath = item.path.slice(0, -1); // 末尾の/を削除
-              let totalSize = 0;
-              let maxLastModified = new Date(0);
-
-              for (const file of folderFiles.items) {
-                if (!file.path.endsWith('/')) {
-                  totalSize += file.size || 0;
-                  if (file.lastModified && file.lastModified > maxLastModified) {
-                    maxLastModified = file.lastModified;
-                  }
-                }
-              }
-
-              datasetMap.set(datasetPath, {
-                files: folderFiles.items.filter(f => !f.path.endsWith('/')).length,
-                size: totalSize,
-                lastModified: maxLastModified,
-              });
-            } catch (folderErr) {
-              console.warn(`Failed to scan folder ${item.path}:`, folderErr);
+          // パスからデータセット名を抽出 (public/training-data/userId/timestamp/...)
+          const parts = item.path.split('/');
+          if (parts.length >= 4 && !item.path.endsWith('/')) {
+            const datasetPath = parts.slice(0, 4).join('/');
+            const existing = datasetMap.get(datasetPath) || { files: 0, size: 0, lastModified: new Date(0) };
+            existing.files++;
+            existing.size += item.size || 0;
+            if (item.lastModified && item.lastModified > existing.lastModified) {
+              existing.lastModified = item.lastModified;
             }
+            datasetMap.set(datasetPath, existing);
           }
         }
 
