@@ -36,12 +36,12 @@ def parse_args():
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
     parser.add_argument('--auxiliary_fields', type=str, default='[]')
-    # フィールドラベル情報（環境変数から読み取るため、引数としては受け取らない）
-    # parser.add_argument('--field_labels', type=str, default='[]')  # コメントアウト
+    # フィールドラベル情報（引数として受け取るが、環境変数から読み取る）
+    parser.add_argument('--field_labels', type=str, default='[]', help='Field labels (ignored, read from env)')
     parser.add_argument('--problem_type', type=str, default='classification')  # 問題タイプ
     parser.add_argument('--tolerance', type=float, default=0.0)  # 許容範囲
-    # クラス名（環境変数から読み取るため、引数としては受け取らない）
-    # parser.add_argument('--class_names', type=str, default='[]')  # コメントアウト
+    # クラス名（引数として受け取るが、環境変数から読み取る）
+    parser.add_argument('--class_names', type=str, default='[]', help='Class names (ignored, read from env)')
     
     # S3関連パラメータ（環境変数からも取得可能だが、ハイパーパラメータとしても渡される場合がある）
     parser.add_argument('--bucket_name', type=str, default='')
