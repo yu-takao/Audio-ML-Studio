@@ -77,6 +77,7 @@ interface ModelMetadata {
   classes: string[];
   input_shape: number[];
   target_field: string;
+  problem_type?: 'classification' | 'regression';
   // 後方互換：新しい学習スクリプトのみ付与
   dataset?: {
     split_mode?: 'presplit' | 'random' | string;
@@ -101,17 +102,25 @@ interface ModelMetadata {
   };
   metrics: {
     test_loss: number;
-    test_accuracy: number;
+    test_accuracy?: number;
     final_train_loss: number;
-    final_train_accuracy: number;
+    final_train_accuracy?: number;
     final_val_loss: number;
-    final_val_accuracy: number;
+    final_val_accuracy?: number;
+    // 回帰用指標
+    test_mae?: number;
+    final_train_mae?: number;
+    final_val_mae?: number;
+    [key: string]: number | undefined;
   };
   history: {
     loss: number[];
-    accuracy: number[];
+    accuracy?: number[];
     val_loss: number[];
-    val_accuracy: number[];
+    val_accuracy?: number[];
+    mae?: number[];
+    val_mae?: number[];
+    [key: string]: number[] | undefined;
   };
 }
 
@@ -135,19 +144,19 @@ export function CloudTraining({
   const [uploadComplete, setUploadComplete] = useState(!!s3DatasetPath); // S3パスがあれば既にアップロード済み
   const [uploadedPath, setUploadedPath] = useState<string>(s3DatasetPath || '');
   const [uploadedFileCount, setUploadedFileCount] = useState(0);
-  
+
   const [isStartingTraining, setIsStartingTraining] = useState(false);
   const [currentJob, setCurrentJob] = useState<TrainingJob | null>(null);
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
-  
+
   const [error, setError] = useState<string | null>(null);
   const [isAmplifyConfigured, setIsAmplifyConfigured] = useState(false);
-  
+
   // モデルメタデータ（精度情報）
   const [modelMetadata, setModelMetadata] = useState<ModelMetadata | null>(null);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState(false);
   const [showTrainingHistory, setShowTrainingHistory] = useState(false);
-  
+
   // 過去の訓練ジョブ
   const [savedJobs, setSavedJobs] = useState<TrainingJob[]>([]);
   const [showPastJobs, setShowPastJobs] = useState(false);
@@ -163,14 +172,14 @@ export function CloudTraining({
    */
   const loadTrainingHistoryFromS3 = useCallback(async () => {
     if (!userId) return;
-    
+
     setIsLoadingJobs(true);
     try {
       const result = await downloadData({ path: TRAINING_HISTORY_PATH }).result;
       const text = await result.body.text();
       const jobs: TrainingJob[] = JSON.parse(text);
       setSavedJobs(jobs);
-      
+
       // 進行中のジョブがあれば復元
       const inProgressJob = jobs.find(j => j.status === 'InProgress');
       if (inProgressJob && !currentJob) {
@@ -249,10 +258,10 @@ export function CloudTraining({
         }
         // 最新10件まで保持
         updated = updated.slice(0, 10);
-        
+
         // S3に保存（非同期）
         saveTrainingHistoryToS3(updated);
-        
+
         return updated;
       });
     }
@@ -270,7 +279,7 @@ export function CloudTraining({
   useEffect(() => {
     const checkAmplifyConfig = async () => {
       try {
-        await getUrl({ path: 'test-config-check' }).catch(() => {});
+        await getUrl({ path: 'test-config-check' }).catch(() => { });
         setIsAmplifyConfigured(true);
       } catch {
         setIsAmplifyConfigured(false);
@@ -283,7 +292,7 @@ export function CloudTraining({
   const customConfig = (outputs as { custom?: { startTrainingUrl?: string; getTrainingStatusUrl?: string } }).custom;
   const START_TRAINING_URL = customConfig?.startTrainingUrl || '';
   const GET_STATUS_URL = customConfig?.getTrainingStatusUrl || '';
-  
+
   // URLの検証（デバッグ用）
   useEffect(() => {
     if (!GET_STATUS_URL) {
@@ -329,7 +338,7 @@ export function CloudTraining({
       for (let i = 0; i < fileInfoList.length; i++) {
         const fileInfo = fileInfoList[i];
         const filePath = `${basePath}/${fileInfo.path}`;
-        
+
         setUploadProgress({
           current: i + 1,
           total: fileInfoList.length,
@@ -378,20 +387,20 @@ export function CloudTraining({
       });
 
       console.log(`Uploaded ${successCount}/${fileInfoList.length} files to ${basePath}`);
-      
+
       // メタデータを保存
       if (onUploadComplete) {
         onUploadComplete(basePath);
       }
     } catch (err) {
       const errorMessage = (err as Error).message;
-      
+
       if (errorMessage.includes('No credentials') || errorMessage.includes('not configured')) {
         setError('Amplifyが設定されていません。');
       } else {
         setError('アップロードに失敗しました: ' + errorMessage);
       }
-      
+
       setUploadProgress(prev => prev ? { ...prev, status: 'error' } : null);
     } finally {
       setIsUploading(false);
@@ -407,27 +416,27 @@ export function CloudTraining({
       // modelPathは s3://bucket/models/userId/jobName/output/model.tar.gz の形式
       // メタデータは同じディレクトリに保存されている
       // SageMakerの出力は /output/ 以下に展開される
-      
+
       // バケット名とパスを抽出
       const pathMatch = modelPath.match(/s3:\/\/([^\/]+)\/(.+)/);
       if (!pathMatch) {
         console.error('Invalid model path:', modelPath);
         return;
       }
-      
+
       const [, , fullPath] = pathMatch;
       // model.tar.gz を model_metadata.json に置き換え
       const metadataPath = fullPath.replace('model.tar.gz', 'model_metadata.json');
-      
+
       console.log('Loading metadata from:', metadataPath);
-      
+
       const downloadResult = await downloadData({
         path: metadataPath,
       }).result;
-      
+
       const text = await downloadResult.body.text();
       const metadata: ModelMetadata = JSON.parse(text);
-      
+
       setModelMetadata(metadata);
       console.log('Model metadata loaded:', metadata);
     } catch (err) {
@@ -445,7 +454,7 @@ export function CloudTraining({
     setCurrentJob(job);
     setModelMetadata(null);
     setShowPastJobs(false);
-    
+
     // 完了済みの場合はメタデータを読み込む
     if (job.status === 'Completed' && job.modelPath) {
       await loadModelMetadata(job.modelPath);
@@ -524,7 +533,7 @@ export function CloudTraining({
       }
 
       const result = await response.json();
-      
+
       setCurrentJob({
         trainingJobName: result.trainingJobName,
         status: 'InProgress',
@@ -557,10 +566,10 @@ export function CloudTraining({
           setError('APIエンドポイントが設定されていません。ページをリロードしてください。');
           return;
         }
-        
+
         const url = `${GET_STATUS_URL}?trainingJobName=${encodeURIComponent(trainingJobName)}`;
         console.log('[CloudTraining] Polling status from:', url);
-        
+
         const response = await fetch(url);
 
         if (!response.ok) {
@@ -695,17 +704,16 @@ export function CloudTraining({
             <Database className="w-4 h-4" />
             {showPastJobs ? '過去の訓練を閉じる' : `過去の訓練を表示 (${savedJobs.length}件)`}
           </button>
-          
+
           {showPastJobs && (
             <div className="mt-2 space-y-2">
               {savedJobs.map((job) => (
                 <div
                   key={job.trainingJobName}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer ${
-                    currentJob?.trainingJobName === job.trainingJobName
-                      ? 'bg-sky-500/20 border-sky-500/50'
-                      : 'bg-zinc-800/50 border-zinc-700 hover:border-zinc-600'
-                  }`}
+                  className={`p-3 rounded-lg border transition-all cursor-pointer ${currentJob?.trainingJobName === job.trainingJobName
+                    ? 'bg-sky-500/20 border-sky-500/50'
+                    : 'bg-zinc-800/50 border-zinc-700 hover:border-zinc-600'
+                    }`}
                   onClick={() => selectPastJob(job)}
                 >
                   <div className="flex items-center justify-between">
@@ -723,18 +731,17 @@ export function CloudTraining({
                         {job.trainingJobName}
                       </span>
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded ${
-                      job.status === 'Completed' ? 'bg-emerald-500/20 text-emerald-400' :
+                    <span className={`text-xs px-2 py-0.5 rounded ${job.status === 'Completed' ? 'bg-emerald-500/20 text-emerald-400' :
                       job.status === 'Failed' ? 'bg-red-500/20 text-red-400' :
-                      job.status === 'InProgress' ? 'bg-sky-500/20 text-sky-400' :
-                      'bg-zinc-600/20 text-zinc-400'
-                    }`}>
+                        job.status === 'InProgress' ? 'bg-sky-500/20 text-sky-400' :
+                          'bg-zinc-600/20 text-zinc-400'
+                      }`}>
                       {job.status}
                     </span>
                   </div>
                 </div>
               ))}
-              
+
               <div className="flex gap-2 mt-2">
                 <button
                   onClick={clearSavedJobs}
@@ -776,9 +783,8 @@ export function CloudTraining({
       <div className="mb-4 p-4 bg-zinc-900/50 rounded-lg">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-              uploadComplete ? 'bg-emerald-500' : 'bg-zinc-700'
-            }`}>
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${uploadComplete ? 'bg-emerald-500' : 'bg-zinc-700'
+              }`}>
               {uploadComplete ? (
                 <CheckCircle2 className="w-4 h-4 text-white" />
               ) : (
@@ -789,25 +795,24 @@ export function CloudTraining({
               {isUsingS3Dataset ? 'S3データセット' : 'データをS3にアップロード'}
             </span>
           </div>
-          
+
           {/* S3データセット使用時 */}
           {isUsingS3Dataset && (
             <div className="flex items-center gap-2 text-sm text-emerald-400">
               <Database className="w-4 h-4" />
               <span>選択済み</span>
-          </div>
+            </div>
           )}
-          
+
           {/* ローカルアップロード時 */}
           {!isUsingS3Dataset && !uploadComplete && (
             <button
               onClick={uploadDataToS3}
               disabled={isUploading || fileInfoList.length === 0}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-                isUploading || fileInfoList.length === 0
-                  ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                  : 'bg-sky-500 text-white hover:bg-sky-600'
-              }`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${isUploading || fileInfoList.length === 0
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-sky-500 text-white hover:bg-sky-600'
+                }`}
             >
               {isUploading ? (
                 <>
@@ -878,10 +883,9 @@ export function CloudTraining({
       <div className="mb-4 p-4 bg-zinc-900/50 rounded-lg">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-              currentJob?.status === 'Completed' ? 'bg-emerald-500' : 
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentJob?.status === 'Completed' ? 'bg-emerald-500' :
               currentJob ? 'bg-sky-500' : 'bg-zinc-700'
-            }`}>
+              }`}>
               {currentJob?.status === 'Completed' ? (
                 <CheckCircle2 className="w-4 h-4 text-white" />
               ) : (
@@ -894,11 +898,10 @@ export function CloudTraining({
             <button
               onClick={startCloudTraining}
               disabled={!uploadComplete || isStartingTraining || !START_TRAINING_URL}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-                !uploadComplete || isStartingTraining || !START_TRAINING_URL
-                  ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                  : 'bg-emerald-500 text-white hover:bg-emerald-600'
-              }`}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${!uploadComplete || isStartingTraining || !START_TRAINING_URL
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-emerald-500 text-white hover:bg-emerald-600'
+                }`}
             >
               {isStartingTraining ? (
                 <>
@@ -986,41 +989,51 @@ export function CloudTraining({
           ) : modelMetadata ? (
             <div className="space-y-4">
               {/* メイン精度指標 */}
+              {/* メイン精度指標 */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 border border-emerald-500/30 rounded-xl p-3">
                   <div className="flex items-center gap-2 text-emerald-400 text-xs mb-1">
                     <Target className="w-3 h-3" />
-                    テスト精度
+                    {modelMetadata.problem_type === 'regression' ? 'テストMAE' : 'テスト精度'}
                   </div>
                   <div className="text-2xl font-bold text-white">
-                    {(modelMetadata.metrics.test_accuracy * 100).toFixed(1)}%
+                    {modelMetadata.problem_type === 'regression'
+                      ? (modelMetadata.metrics['test_mae'] ?? 0).toFixed(4)
+                      : `${((modelMetadata.metrics.test_accuracy ?? 0) * 100).toFixed(1)}%`
+                    }
                   </div>
                 </div>
                 <div className="bg-gradient-to-br from-sky-500/20 to-sky-600/10 border border-sky-500/30 rounded-xl p-3">
                   <div className="flex items-center gap-2 text-sky-400 text-xs mb-1">
                     <TrendingUp className="w-3 h-3" />
-                    検証精度
+                    {modelMetadata.problem_type === 'regression' ? '検証MAE' : '検証精度'}
                   </div>
                   <div className="text-2xl font-bold text-white">
-                    {(modelMetadata.metrics.final_val_accuracy * 100).toFixed(1)}%
+                    {modelMetadata.problem_type === 'regression'
+                      ? (modelMetadata.metrics['final_val_mae'] ?? 0).toFixed(4)
+                      : `${((modelMetadata.metrics.final_val_accuracy ?? 0) * 100).toFixed(1)}%`
+                    }
                   </div>
                 </div>
                 <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-xl p-3">
                   <div className="flex items-center gap-2 text-amber-400 text-xs mb-1">
                     <Award className="w-3 h-3" />
-                    訓練精度
+                    {modelMetadata.problem_type === 'regression' ? '訓練MAE' : '訓練精度'}
                   </div>
                   <div className="text-2xl font-bold text-white">
-                    {(modelMetadata.metrics.final_train_accuracy * 100).toFixed(1)}%
+                    {modelMetadata.problem_type === 'regression'
+                      ? (modelMetadata.metrics['final_train_mae'] ?? 0).toFixed(4)
+                      : `${((modelMetadata.metrics.final_train_accuracy ?? 0) * 100).toFixed(1)}%`
+                    }
                   </div>
                 </div>
                 <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-xl p-3">
                   <div className="flex items-center gap-2 text-rose-400 text-xs mb-1">
                     <BarChart3 className="w-3 h-3" />
-                    テスト損失
+                    {modelMetadata.problem_type === 'regression' ? 'テストMSE (損失)' : 'テスト損失'}
                   </div>
                   <div className="text-2xl font-bold text-white">
-                    {modelMetadata.metrics.test_loss.toFixed(4)}
+                    {(modelMetadata.metrics.test_loss ?? 0).toFixed(4)}
                   </div>
                 </div>
               </div>
@@ -1028,7 +1041,7 @@ export function CloudTraining({
               {/* クラス数 */}
               <div className="flex items-center gap-4 text-sm text-zinc-400">
                 <span>クラス数: <span className="text-white font-medium">{modelMetadata.classes.length}</span></span>
-                <span>エポック数: <span className="text-white font-medium">{modelMetadata.history.accuracy.length}</span></span>
+                <span>エポック数: <span className="text-white font-medium">{modelMetadata.history.loss.length}</span></span>
               </div>
 
               {/* 訓練履歴グラフ */}
@@ -1040,30 +1053,57 @@ export function CloudTraining({
                   <BarChart3 className="w-4 h-4" />
                   {showTrainingHistory ? '訓練履歴を閉じる' : '訓練履歴を表示'}
                 </button>
-                
+
                 {showTrainingHistory && (
                   <div className="mt-3 space-y-4">
-                    {/* 精度の推移 */}
+                    {/* 精度/MAEの推移 */}
                     <div className="bg-zinc-800/50 rounded-lg p-4">
-                      <h4 className="text-sm font-medium text-white mb-3">精度の推移</h4>
+                      <h4 className="text-sm font-medium text-white mb-3">
+                        {modelMetadata.problem_type === 'regression' ? 'MAE (平均絶対誤差) の推移' : '精度の推移'}
+                      </h4>
                       <div className="h-32 flex items-end gap-px">
-                        {modelMetadata.history.accuracy.map((acc, i) => {
-                          const valAcc = modelMetadata.history.val_accuracy[i];
-                          return (
-                            <div key={i} className="flex-1 flex flex-col gap-px items-center">
-                              <div
-                                className="w-full bg-sky-500/60 rounded-t"
-                                style={{ height: `${valAcc * 100}%` }}
-                                title={`検証: ${(valAcc * 100).toFixed(1)}%`}
-                              />
-                              <div
-                                className="w-full bg-emerald-500/60 rounded-t"
-                                style={{ height: `${acc * 100}%` }}
-                                title={`訓練: ${(acc * 100).toFixed(1)}%`}
-                              />
-                            </div>
-                          );
-                        })}
+                        {(modelMetadata.problem_type === 'regression'
+                          ? (modelMetadata.history.mae || [])
+                          : (modelMetadata.history.accuracy || []))
+                          .map((val, i) => {
+                            const valMetric = modelMetadata.problem_type === 'regression'
+                              ? (modelMetadata.history.val_mae?.[i] || 0)
+                              : (modelMetadata.history.val_accuracy?.[i] || 0);
+
+                            // MAEの場合は値が小さいほど良い（表示上のスケール調整は難しいのでそのまま表示するか、最大値で正規化）
+                            // ここでは簡易的に、最大値で割って高さを決める（MAEの場合）
+                            // ACCの場合は0-1なのでそのまま
+
+                            const maxVal = modelMetadata.problem_type === 'regression'
+                              ? Math.max(
+                                ...(modelMetadata.history.mae || []),
+                                ...(modelMetadata.history.val_mae || [])
+                              ) || 1
+                              : 1;
+
+                            const heightPercent = modelMetadata.problem_type === 'regression'
+                              ? (val / maxVal) * 100
+                              : val * 100;
+
+                            const valHeightPercent = modelMetadata.problem_type === 'regression'
+                              ? (valMetric / maxVal) * 100
+                              : valMetric * 100;
+
+                            return (
+                              <div key={i} className="flex-1 flex flex-col gap-px items-center">
+                                <div
+                                  className="w-full bg-sky-500/60 rounded-t"
+                                  style={{ height: `${valHeightPercent}%` }}
+                                  title={`検証: ${modelMetadata.problem_type === 'regression' ? valMetric.toFixed(4) : (valMetric * 100).toFixed(1) + '%'}`}
+                                />
+                                <div
+                                  className="w-full bg-emerald-500/60 rounded-t"
+                                  style={{ height: `${heightPercent}%` }}
+                                  title={`訓練: ${modelMetadata.problem_type === 'regression' ? val.toFixed(4) : (val * 100).toFixed(1) + '%'}`}
+                                />
+                              </div>
+                            );
+                          })}
                       </div>
                       <div className="flex justify-between text-xs text-zinc-500 mt-2">
                         <span>エポック 1</span>
@@ -1077,7 +1117,11 @@ export function CloudTraining({
                             検証
                           </span>
                         </div>
-                        <span>エポック {modelMetadata.history.accuracy.length}</span>
+                        <span>エポック {(
+                          modelMetadata.problem_type === 'regression'
+                            ? modelMetadata.history.mae?.length
+                            : modelMetadata.history.accuracy?.length
+                        ) || 0}</span>
                       </div>
                     </div>
 

@@ -60,6 +60,9 @@ export const handler: Handler = async (event) => {
       };
     }
 
+    // デバッグ: 受信したconfigをログ出力
+    console.log('Received config:', JSON.stringify(config, null, 2));
+
     const bucket = process.env.TRAINING_BUCKET;
     const sagemakerRoleArn = process.env.SAGEMAKER_ROLE_ARN;
     const region = process.env.AWS_REGION || 'ap-northeast-1';
@@ -68,7 +71,7 @@ export const handler: Handler = async (event) => {
       return {
         statusCode: 500,
         headers: responseHeaders,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           error: 'Server configuration missing',
           details: { bucket: !!bucket, sagemakerRoleArn: !!sagemakerRoleArn }
         }),
@@ -85,13 +88,13 @@ export const handler: Handler = async (event) => {
     const hyperParameters = {
       // SageMaker スクリプトモード設定
       'sagemaker_program': 'train.py',
-    // バージョン付きキーで常に最新スクリプトを取得
-    'sagemaker_submit_directory': `s3://${bucket}/public/scripts/audio-ml-training-v2.tar.gz`,
+      // バージョン付きキーで常に最新スクリプトを取得
+      'sagemaker_submit_directory': `s3://${bucket}/public/scripts/audio-ml-training-v2.tar.gz`,
       'sagemaker_region': region,
-    // S3アップロード用パラメータ（スクリプト側で環境変数と併用）
-    'bucket_name': bucket,
-    'user_id': userId,
-    'job_name': trainingJobName,
+      // S3アップロード用パラメータ（スクリプト側で環境変数と併用）
+      'bucket_name': bucket,
+      'user_id': userId,
+      'job_name': trainingJobName,
       // モデルパラメータ
       'epochs': String(config.epochs),
       'batch_size': String(config.batchSize),
@@ -168,7 +171,7 @@ export const handler: Handler = async (event) => {
     };
   } catch (error) {
     console.error('Error starting training job:', error);
-    
+
     return {
       statusCode: 500,
       headers: responseHeaders,

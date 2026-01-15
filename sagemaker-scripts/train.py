@@ -359,6 +359,21 @@ def main():
     logger.info("=" * 50)
     logger.info("Audio ML Training Script")
     logger.info("=" * 50)
+    
+    # デバッグ: 環境変数をダンプ（SM_HPSの内容を確認するため）
+    logger.info("Environment Variables Dump:")
+    for k, v in os.environ.items():
+        if k.startswith('SM_'):
+            logger.info(f"  {k}: {v}")
+            
+    # SM_HPSの中身をパースしてダンプ
+    if 'SM_HPS' in os.environ:
+        try:
+            hps_dump = json.loads(os.environ['SM_HPS'])
+            logger.info(f"SM_HPS Parsed Content: {json.dumps(hps_dump, indent=2)}")
+        except Exception as e:
+            logger.error(f"Failed to parse SM_HPS: {e}")
+            
     logger.info(f"Parameters:")
     logger.info(f"  - problem_type: {args.problem_type}")
     logger.info(f"  - tolerance: {args.tolerance}")
