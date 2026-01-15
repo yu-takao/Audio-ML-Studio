@@ -36,10 +36,15 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args():
-    """コマンドライン引数を解析"""
+    """コマンドライン引数を解析（基本型のみ）
+    
+    複雑な型（リスト、辞書）はSM_HPS環境変数から取得する。
+    SageMakerがハイパーパラメータをコマンドライン引数として渡す際に、
+    スペースを含むJSON配列が正しくパースされない問題を回避するため。
+    """
     parser = argparse.ArgumentParser()
     
-    # ハイパーパラメータ
+    # 基本型のハイパーパラメータのみ
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--learning_rate', type=float, default=0.001)
@@ -48,27 +53,34 @@ def parse_args():
     parser.add_argument('--input_height', type=int, default=128)
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
-    parser.add_argument('--auxiliary_fields', nargs='*', default=[])
-    parser.add_argument('--class_names', nargs='*', default=[])
-    # 問題タイプ: classification または regression
-    parser.add_argument('--problem_type', type=str, default='classification', choices=['classification', 'regression'])
-    # 回帰の許容誤差（正解判定用）
+    parser.add_argument('--problem_type', type=str, default='classification')
     parser.add_argument('--tolerance', type=float, default=0.0)
-    # S3アップロード用情報（オプション）
-    parser.add_argument('--bucket_name', type=str, default=None)
-    parser.add_argument('--user_id', type=str, default=None)
-    parser.add_argument('--job_name', type=str, default=None)
     
     # SageMaker環境変数
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', '/opt/ml/model'))
     parser.add_argument('--train', type=str, default=os.environ.get('SM_CHANNEL_TRAINING', '/opt/ml/input/data/training'))
     parser.add_argument('--output_data_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', '/opt/ml/output/data'))
     
-    # 未知の引数も許容（SageMakerが追加する引数対応）
-    args, unknown = parser.parse_known_args()
-    if unknown:
-        logger.warning(f"Unknown arguments ignored: {unknown}")
+    # 未知の引数は無視（SageMakerが追加する引数対応）
+    args, _ = parser.parse_known_args()
     return args
+
+
+def get_hyperparameters() -> dict:
+    """SM_HPS環境変数から全ハイパーパラメータを取得
+    
+    SageMakerはSM_HPS環境変数にJSON形式で全ハイパーパラメータを格納する。
+    複雑な型（リスト、辞書）はこちらから取得することで、
+    コマンドライン引数のパース問題を回避できる。
+    """
+    sm_hps = os.environ.get('SM_HPS', '{}')
+    try:
+        hps = json.loads(sm_hps)
+        logger.info(f"Loaded hyperparameters from SM_HPS: {list(hps.keys())}")
+        return hps
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse SM_HPS: {e}")
+        return {}
 
 
 def extract_label_from_filename(filename: str, target_field_index: int) -> str:
@@ -318,6 +330,31 @@ def build_regression_model(input_shape: tuple, learning_rate: float):
 def main():
     """メイン関数"""
     args = parse_args()
+    hps = get_hyperparameters()
+    
+    # 複雑な型はSM_HPSから取得（コマンドライン引数のパース問題を回避）
+    class_names = hps.get('class_names', [])
+    auxiliary_fields = hps.get('auxiliary_fields', [])
+    field_labels = hps.get('field_labels', [])
+
+    # 単純な型も念のためSM_HPSから取得（優先的に使用）
+    if 'problem_type' in hps:
+        args.problem_type = hps['problem_type']
+    if 'tolerance' in hps:
+        args.tolerance = float(hps['tolerance'])
+    if 'target_field' in hps:
+        args.target_field = str(hps['target_field'])
+    if 'epochs' in hps:
+        args.epochs = int(hps['epochs'])
+    if 'batch_size' in hps:
+        args.batch_size = int(hps['batch_size'])
+    if 'learning_rate' in hps:
+        args.learning_rate = float(hps['learning_rate'])
+    
+    # S3アップロード用パラメータ（SM_HPSまたは環境変数から取得）
+    bucket_name = hps.get('bucket_name') or os.environ.get('BUCKET_NAME')
+    user_id = hps.get('user_id') or os.environ.get('USER_ID')
+    job_name = hps.get('job_name') or os.environ.get('JOB_NAME')
     
     logger.info("=" * 50)
     logger.info("Audio ML Training Script")
@@ -333,45 +370,17 @@ def main():
     logger.info(f"  - input_height: {args.input_height}")
     logger.info(f"  - input_width: {args.input_width}")
     logger.info(f"  - target_field: {args.target_field}")
-    logger.info(f"  - auxiliary_fields: {args.auxiliary_fields}")
-    logger.info(f"  - class_names: {args.class_names}")
+    logger.info(f"  - auxiliary_fields: {auxiliary_fields}")
+    logger.info(f"  - class_names: {class_names}")
+    logger.info(f"  - field_labels: {field_labels}")
     logger.info(f"  - train directory: {args.train}")
     logger.info(f"  - model directory: {args.model_dir}")
     
     # パラメータを解析
     target_field_index = int(args.target_field)
     
-    # auxiliary_fieldsとclass_namesの処理（リストまたはJSON文字列）
-    def parse_list_arg(arg):
-        """リスト引数を解析（SageMakerが渡す形式に対応）"""
-        if isinstance(arg, list):
-            # nargs='*'で受け取った場合、最初の要素が'['で始まる場合はJSON
-            if len(arg) > 0 and isinstance(arg[0], str) and arg[0].startswith('['):
-                # スペースで分割された引数を結合してJSONとして解析
-                joined = ' '.join(arg)
-                try:
-                    return json.loads(joined)
-                except json.JSONDecodeError:
-                    # それでもダメなら個々の要素をクリーンアップ
-                    cleaned = []
-                    for item in arg:
-                        item = item.strip("[]',\" ")
-                        if item:
-                            cleaned.append(item)
-                    return cleaned
-            else:
-                return arg
-        elif isinstance(arg, str):
-            if arg.startswith('['):
-                return json.loads(arg)
-            return [arg] if arg else []
-        return []
-    
-    auxiliary_indices = parse_list_arg(args.auxiliary_fields)
-    class_names = parse_list_arg(args.class_names)
-    
-    logger.info(f"Parsed auxiliary_indices: {auxiliary_indices}")
-    logger.info(f"Parsed class_names: {class_names}")
+    # auxiliary_fieldsをインデックスのリストに変換
+    auxiliary_indices = auxiliary_fields if isinstance(auxiliary_fields, list) else []
     
     # 事前分割されたデータかチェック
     is_presplit, train_dir, val_dir, test_dir = check_presplit_data(args.train)
@@ -561,10 +570,7 @@ def main():
     except ImportError:
         logger.info("TensorFlow.js not available, skipping TFJS export")
     
-    # S3アップロード用の値を環境変数から補完（SageMakerのEnvironmentで渡すため）
-    bucket_name = args.bucket_name or os.environ.get('BUCKET_NAME')
-    user_id = args.user_id or os.environ.get('USER_ID')
-    job_name = args.job_name or os.environ.get('JOB_NAME')
+    # S3アップロード用の値は既にmain()の冒頭で取得済み
 
     # メタデータを保存
     def build_split_class_distribution(y_encoded: np.ndarray, encoder):

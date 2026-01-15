@@ -278,7 +278,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         } else {
           console.warn('Failed to load index file, falling back to full scan:', indexErr);
         }
-        
+
         // public/training-data/ 以下の全ファイルを取得（従来の方法）
         const result = await list({
           path: `public/training-data/${userId}/`,
@@ -324,7 +324,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         datasets.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
 
         setS3Datasets(datasets);
-        
+
         // インデックスファイルを作成（次回の高速化のため）
         if (datasets.length > 0) {
           try {
@@ -449,7 +449,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
   const updateDatasetIndex = useCallback(async (dataPath: string, fileCount: number) => {
     try {
       const indexPath = `public/user-data/${userId}/datasets.json`;
-      
+
       // 既存のインデックスを読み込む
       let existingDatasets: Array<{ path: string; name: string; fileCount: number; lastModified: string; size: number }> = [];
       try {
@@ -805,10 +805,10 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                 }}
                 disabled={!isPast && !isActive}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${isActive
-                    ? 'bg-sky-500 text-white'
-                    : isPast
-                      ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer'
-                      : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                  ? 'bg-sky-500 text-white'
+                  : isPast
+                    ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer'
+                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                   }`}
               >
                 <Icon className="w-4 h-4" />
@@ -828,8 +828,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         <button
           onClick={() => setMainTab('new-training')}
           className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${mainTab === 'new-training'
-              ? 'bg-violet-500 text-white'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
+            ? 'bg-violet-500 text-white'
+            : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
             }`}
         >
           <Plus className="w-5 h-5" />
@@ -838,8 +838,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         <button
           onClick={() => setMainTab('saved-models')}
           className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${mainTab === 'saved-models'
-              ? 'bg-violet-500 text-white'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
+            ? 'bg-violet-500 text-white'
+            : 'text-zinc-400 hover:text-white hover:bg-zinc-700/50'
             }`}
         >
           <Archive className="w-5 h-5" />
@@ -888,8 +888,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                       loadS3Datasets();
                     }}
                     className={`p-6 rounded-xl border-2 transition-all text-left ${dataSource === 's3'
-                        ? 'border-sky-500 bg-sky-500/10'
-                        : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
+                      ? 'border-sky-500 bg-sky-500/10'
+                      : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
                       }`}
                   >
                     <Cloud className={`w-8 h-8 mb-3 ${dataSource === 's3' ? 'text-sky-400' : 'text-zinc-500'}`} />
@@ -904,8 +904,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   <button
                     onClick={() => setDataSource('local')}
                     className={`p-6 rounded-xl border-2 transition-all text-left ${dataSource === 'local'
-                        ? 'border-emerald-500 bg-emerald-500/10'
-                        : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
+                      ? 'border-emerald-500 bg-emerald-500/10'
+                      : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
                       }`}
                   >
                     <Upload className={`w-8 h-8 mb-3 ${dataSource === 'local' ? 'text-emerald-400' : 'text-zinc-500'}`} />
@@ -956,8 +956,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                             onClick={() => selectS3Dataset(dataset)}
                             disabled={isLoadingData}
                             className={`w-full p-4 rounded-lg border transition-all text-left ${selectedS3Dataset?.path === dataset.path
-                                ? 'border-sky-500 bg-sky-500/10'
-                                : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
+                              ? 'border-sky-500 bg-sky-500/10'
+                              : 'border-zinc-700 hover:border-zinc-600 bg-zinc-900/50'
                               } ${isLoadingData ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
                             <div className="flex items-center justify-between">
@@ -1038,8 +1038,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   onClick={() => setCurrentStep('configure')}
                   disabled={!hasDataSource}
                   className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${hasDataSource
-                      ? 'bg-sky-500 hover:bg-sky-600 text-white'
-                      : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                    : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                     }`}
                 >
                   次へ：設定
@@ -1052,8 +1052,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
           {/* Step 2: 設定 */}
           {currentStep === 'configure' && (
             <div className="space-y-6">
-              {/* メタデータ設定（ローカルアップロードの場合） */}
-              {dataSource === 'local' && metadata && (
+              {/* メタデータ設定（ローカルアップロードまたはS3データセットの場合） */}
+              {(dataSource === 'local' || (dataSource === 's3' && selectedS3Dataset)) && metadata && (
                 <MetadataConfig
                   metadata={metadata}
                   onFieldLabelChange={handleFieldLabelChange}
@@ -1068,8 +1068,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                 />
               )}
 
-              {/* データセット情報（ローカルの場合） */}
-              {dataSource === 'local' && datasetInfo && (
+              {/* データセット情報（ローカルの場合：S3の場合はMetadataConfig内に含めるか、ここで表示するか検討だが、既存UIと合わせる） */}
+              {(dataSource === 'local' || dataSource === 's3') && datasetInfo && (
                 <section className="bg-zinc-800/50 rounded-xl border border-zinc-700 p-6">
                   <div className="flex items-center gap-3 mb-4">
                     <div className="p-2 rounded-lg bg-emerald-500/20">
@@ -1227,8 +1227,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                     }}
                     disabled={!isConfigComplete}
                     className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${isConfigComplete
-                        ? 'bg-sky-500 hover:bg-sky-600 text-white'
-                        : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                      ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                      : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                       }`}
                   >
                     次へ：分割＆拡張
@@ -1353,8 +1353,8 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
                   onClick={() => setCurrentStep('training')}
                   disabled={!isAugmentationComplete && dataSource === 'local'}
                   className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${(isAugmentationComplete || dataSource === 's3')
-                      ? 'bg-sky-500 hover:bg-sky-600 text-white'
-                      : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    ? 'bg-sky-500 hover:bg-sky-600 text-white'
+                    : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                     }`}
                 >
                   {!isAugmentationComplete && dataSource === 'local'
