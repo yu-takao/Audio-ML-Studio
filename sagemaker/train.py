@@ -36,12 +36,12 @@ def parse_args():
     parser.add_argument('--input_width', type=int, default=128)
     parser.add_argument('--target_field', type=str, default='0')
     parser.add_argument('--auxiliary_fields', type=str, default='[]')
-    # フィールドラベル情報（JSON文字列）
-    parser.add_argument('--field_labels', type=str, default='[]')
+    # フィールドラベル情報（環境変数から読み取るため、引数としては受け取らない）
+    # parser.add_argument('--field_labels', type=str, default='[]')  # コメントアウト
     parser.add_argument('--problem_type', type=str, default='classification')  # 問題タイプ
     parser.add_argument('--tolerance', type=float, default=0.0)  # 許容範囲
-    # クラス名（JSON文字列）
-    parser.add_argument('--class_names', type=str, default='[]')
+    # クラス名（環境変数から読み取るため、引数としては受け取らない）
+    # parser.add_argument('--class_names', type=str, default='[]')  # コメントアウト
     
     # S3関連パラメータ（環境変数からも取得可能だが、ハイパーパラメータとしても渡される場合がある）
     parser.add_argument('--bucket_name', type=str, default='')
@@ -300,23 +300,26 @@ def main():
     
     auxiliary_fields = json.loads(args.auxiliary_fields)
     
-    # field_labelsとclass_namesはJSON文字列として受け取る
-    print(f"\n=== Parsing field_labels ===")
-    print(f"Raw value: {args.field_labels}")
+    # field_labelsとclass_namesは環境変数から読み取る
+    # コマンドライン引数ではシェルによって分割されてしまうため
+    print(f"\n=== Parsing field_labels from environment ===")
+    field_labels_str = os.environ.get('SM_HP_FIELD_LABELS', '[]')
+    print(f"Raw value from SM_HP_FIELD_LABELS: {field_labels_str}")
     
     try:
-        field_labels = json.loads(args.field_labels)
+        field_labels = json.loads(field_labels_str)
         print(f"Successfully parsed: {field_labels}")
     except json.JSONDecodeError as e:
         print(f"JSON parsing failed: {e}")
         print(f"Using fallback: empty list")
         field_labels = []
     
-    print(f"\n=== Parsing class_names ===")
-    print(f"Raw value: {args.class_names}")
+    print(f"\n=== Parsing class_names from environment ===")
+    class_names_str = os.environ.get('SM_HP_CLASS_NAMES', '[]')
+    print(f"Raw value from SM_HP_CLASS_NAMES: {class_names_str}")
     
     try:
-        class_names = json.loads(args.class_names)
+        class_names = json.loads(class_names_str)
         print(f"Successfully parsed: {class_names}")
     except json.JSONDecodeError as e:
         print(f"JSON parsing failed: {e}")
