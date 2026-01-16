@@ -565,11 +565,20 @@ def main():
         logger.info(f"Test Loss (MSE): {test_loss:.4f}")
         logger.info(f"Test MAE: {test_mae:.4f}")
         test_metric = test_mae  # 回帰ではMAEを主指標として使用
+        
+        # 許容誤差内精度を計算
+        predictions = model.predict(X_test, verbose=0).flatten()
+        errors = np.abs(predictions - y_test)
+        tolerance = args.tolerance if args.tolerance > 0 else 1.0  # デフォルト許容誤差
+        tolerance_accuracy = float(np.mean(errors <= tolerance))
+        logger.info(f"Tolerance: {tolerance}")
+        logger.info(f"Tolerance Accuracy: {tolerance_accuracy:.4f} ({tolerance_accuracy*100:.1f}% within ±{tolerance})")
     else:
         test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
         logger.info(f"Test Loss: {test_loss:.4f}")
         logger.info(f"Test Accuracy: {test_accuracy:.4f}")
         test_metric = test_accuracy
+        tolerance_accuracy = None  # 分類では使用しない
     
     # モデルを保存
     model_path = os.path.join(args.model_dir, 'audio_classifier')
@@ -636,6 +645,7 @@ def main():
             f'final_train_{metric_key}': float(history.history[history_metric_key][-1]),
             'final_val_loss': float(history.history['val_loss'][-1]),
             f'final_val_{metric_key}': float(history.history[f'val_{history_metric_key}'][-1]),
+            **({"tolerance_accuracy": tolerance_accuracy} if tolerance_accuracy is not None else {}),
         },
         'history': {
             'loss': [float(x) for x in history.history['loss']],

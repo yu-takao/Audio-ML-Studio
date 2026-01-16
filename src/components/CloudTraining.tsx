@@ -78,7 +78,7 @@ interface ModelMetadata {
   input_shape: number[];
   target_field: string;
   problem_type?: 'classification' | 'regression';
-  // 後方互換：新しい学習スクリプトのみ付与
+  tolerance?: number;
   dataset?: {
     split_mode?: 'presplit' | 'random' | string;
     counts?: {
@@ -111,6 +111,7 @@ interface ModelMetadata {
     test_mae?: number;
     final_train_mae?: number;
     final_val_mae?: number;
+    tolerance_accuracy?: number;
     [key: string]: number | undefined;
   };
   history: {
@@ -988,55 +989,79 @@ export function CloudTraining({
             </div>
           ) : modelMetadata ? (
             <div className="space-y-4">
-              {/* メイン精度指標 */}
-              {/* メイン精度指標 */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 border border-emerald-500/30 rounded-xl p-3">
-                  <div className="flex items-center gap-2 text-emerald-400 text-xs mb-1">
-                    <Target className="w-3 h-3" />
-                    {modelMetadata.problem_type === 'regression' ? 'テストMAE' : 'テスト精度'}
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {modelMetadata.problem_type === 'regression'
-                      ? (modelMetadata.metrics['test_mae'] ?? 0).toFixed(4)
-                      : `${((modelMetadata.metrics.test_accuracy ?? 0) * 100).toFixed(1)}%`
-                    }
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-sky-500/20 to-sky-600/10 border border-sky-500/30 rounded-xl p-3">
-                  <div className="flex items-center gap-2 text-sky-400 text-xs mb-1">
-                    <TrendingUp className="w-3 h-3" />
-                    {modelMetadata.problem_type === 'regression' ? '検証MAE' : '検証精度'}
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {modelMetadata.problem_type === 'regression'
-                      ? (modelMetadata.metrics['final_val_mae'] ?? 0).toFixed(4)
-                      : `${((modelMetadata.metrics.final_val_accuracy ?? 0) * 100).toFixed(1)}%`
-                    }
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-xl p-3">
-                  <div className="flex items-center gap-2 text-amber-400 text-xs mb-1">
-                    <Award className="w-3 h-3" />
-                    {modelMetadata.problem_type === 'regression' ? '訓練MAE' : '訓練精度'}
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {modelMetadata.problem_type === 'regression'
-                      ? (modelMetadata.metrics['final_train_mae'] ?? 0).toFixed(4)
-                      : `${((modelMetadata.metrics.final_train_accuracy ?? 0) * 100).toFixed(1)}%`
-                    }
-                  </div>
-                </div>
-                <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-xl p-3">
-                  <div className="flex items-center gap-2 text-rose-400 text-xs mb-1">
-                    <BarChart3 className="w-3 h-3" />
-                    {modelMetadata.problem_type === 'regression' ? 'テストMSE (損失)' : 'テスト損失'}
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {(modelMetadata.metrics.test_loss ?? 0).toFixed(4)}
-                  </div>
-                </div>
-              </div>
+              {/* 回帰モデル判定: problem_typeまたはtest_maeの存在で判定 */}
+              {(() => {
+                const isRegression = modelMetadata.problem_type === 'regression' || modelMetadata.metrics['test_mae'] !== undefined;
+                const tolerance = modelMetadata.tolerance ?? 0;
+                return (
+                  <>
+                    {/* メイン精度指標 */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 border border-emerald-500/30 rounded-xl p-3">
+                        <div className="flex items-center gap-2 text-emerald-400 text-xs mb-1">
+                          <Target className="w-3 h-3" />
+                          {isRegression ? 'テストMAE' : 'テスト精度'}
+                        </div>
+                        <div className="text-2xl font-bold text-white">
+                          {isRegression
+                            ? (modelMetadata.metrics['test_mae'] ?? 0).toFixed(4)
+                            : `${((modelMetadata.metrics.test_accuracy ?? 0) * 100).toFixed(1)}%`
+                          }
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-br from-sky-500/20 to-sky-600/10 border border-sky-500/30 rounded-xl p-3">
+                        <div className="flex items-center gap-2 text-sky-400 text-xs mb-1">
+                          <TrendingUp className="w-3 h-3" />
+                          {isRegression ? '検証MAE' : '検証精度'}
+                        </div>
+                        <div className="text-2xl font-bold text-white">
+                          {isRegression
+                            ? (modelMetadata.metrics['final_val_mae'] ?? 0).toFixed(4)
+                            : `${((modelMetadata.metrics.final_val_accuracy ?? 0) * 100).toFixed(1)}%`
+                          }
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-br from-amber-500/20 to-amber-600/10 border border-amber-500/30 rounded-xl p-3">
+                        <div className="flex items-center gap-2 text-amber-400 text-xs mb-1">
+                          <Award className="w-3 h-3" />
+                          {isRegression ? '訓練MAE' : '訓練精度'}
+                        </div>
+                        <div className="text-2xl font-bold text-white">
+                          {isRegression
+                            ? (modelMetadata.metrics['final_train_mae'] ?? 0).toFixed(4)
+                            : `${((modelMetadata.metrics.final_train_accuracy ?? 0) * 100).toFixed(1)}%`
+                          }
+                        </div>
+                      </div>
+                      <div className="bg-gradient-to-br from-rose-500/20 to-rose-600/10 border border-rose-500/30 rounded-xl p-3">
+                        <div className="flex items-center gap-2 text-rose-400 text-xs mb-1">
+                          <BarChart3 className="w-3 h-3" />
+                          {isRegression ? 'テストMSE (損失)' : 'テスト損失'}
+                        </div>
+                        <div className="text-2xl font-bold text-white">
+                          {(modelMetadata.metrics.test_loss ?? 0).toFixed(4)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 回帰モデルの許容誤差内精度（存在する場合） */}
+                    {isRegression && modelMetadata.metrics['tolerance_accuracy'] !== undefined && (
+                      <div className="bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/30 rounded-xl p-4">
+                        <div className="flex items-center gap-2 text-violet-400 text-sm mb-2">
+                          <CheckCircle2 className="w-4 h-4" />
+                          許容誤差内 (±{tolerance})
+                        </div>
+                        <div className="text-3xl font-bold text-white">
+                          {((modelMetadata.metrics['tolerance_accuracy'] ?? 0) * 100).toFixed(1)}%
+                        </div>
+                        <div className="text-xs text-zinc-400 mt-1">
+                          テストデータのうち、予測誤差が許容範囲内に収まった割合
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* クラス数 */}
               <div className="flex items-center gap-4 text-sm text-zinc-400">
