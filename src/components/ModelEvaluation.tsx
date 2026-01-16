@@ -47,6 +47,12 @@ interface SavedModel {
   fieldLabels?: FieldLabel[]; // フィールドラベル情報
   problemType?: 'classification' | 'regression';
   tolerance?: number;
+  metrics?: {
+    test_loss?: number;
+    test_accuracy?: number;
+    test_mae?: number;
+    [key: string]: number | undefined;
+  };
 }
 
 // 評価ジョブのステータス
@@ -163,6 +169,7 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
               fieldLabels: metadata.field_labels || [], // フィールドラベル情報
               problemType: metadata.problem_type || 'classification',
               tolerance: metadata.tolerance || 0,
+              metrics: metadata.metrics, // メトリクス情報を追加
             });
           } catch (err) {
             // メタデータがない場合もモデルは表示
@@ -529,11 +536,10 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
                       </div>
                       {model.problemType && (
                         <div className="mt-2">
-                          <span className={`text-xs px-2 py-1 rounded ${
-                            model.problemType === 'regression' 
-                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
+                          <span className={`text-xs px-2 py-1 rounded ${model.problemType === 'regression'
+                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                               : 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
-                          }`}>
+                            }`}>
                             {model.problemType === 'regression' ? '回帰問題' : '分類問題'}
                           </span>
                           {model.problemType === 'regression' && model.tolerance !== undefined && (
@@ -548,6 +554,23 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
                           <span>クラス数: {model.classes.length}</span>
                         </div>
                       )}
+                      {model.metrics && (() => {
+                        // 回帰モデル判定: problem_typeまたはtest_maeの存在で判定
+                        const isRegression = model.problemType === 'regression' || model.metrics['test_mae'] !== undefined;
+                        return (
+                          <div className="mt-2 text-xs">
+                            {isRegression ? (
+                              <span className="text-blue-400">
+                                テストMAE: {(model.metrics['test_mae'] ?? 0).toFixed(4)}
+                              </span>
+                            ) : (
+                              <span className="text-violet-400">
+                                テスト精度: {((model.metrics.test_accuracy ?? 0) * 100).toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </button>

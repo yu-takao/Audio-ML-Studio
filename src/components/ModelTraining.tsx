@@ -615,6 +615,7 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
 
   /**
    * データセット統計を計算
+   * データ拡張後の場合は、拡張後のファイル数を使用
    */
   const datasetStats = useMemo<DatasetStats | null>(() => {
     if (!datasetInfo) return null;
@@ -634,14 +635,25 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
     const minSamples = Math.min(...counts);
     const maxSamples = Math.max(...counts);
 
+    // データ拡張後のファイル数を計算
+    // augmentedTrainFiles が存在する場合、元の train + validation + test のうち
+    // train 部分が拡張されているので、その差分を totalFiles に加算
+    let effectiveTotalFiles = datasetInfo.totalFiles;
+    if (augmentedTrainFiles && dataSplit) {
+      const originalTrainCount = dataSplit.train.length;
+      const augmentedTrainCount = augmentedTrainFiles.length;
+      const augmentationIncrease = augmentedTrainCount - originalTrainCount;
+      effectiveTotalFiles = datasetInfo.totalFiles + augmentationIncrease;
+    }
+
     return {
-      totalSamples: datasetInfo.totalFiles,
+      totalSamples: effectiveTotalFiles, // 拡張後のファイル数を使用
       numClasses: datasetInfo.classes.length,
       minSamplesPerClass: minSamples,
       maxSamplesPerClass: maxSamples,
       imbalanceRatio: minSamples > 0 ? maxSamples / minSamples : Infinity,
     };
-  }, [datasetInfo]);
+  }, [datasetInfo, augmentedTrainFiles, dataSplit]);
 
   /**
    * データセット統計が変更されたら推奨パラメータを自動適用
