@@ -71,7 +71,7 @@ export function TrainDataAugmenter({
 
   // 追加拡張設定
   const [enableExtraAugmentation, setEnableExtraAugmentation] = useState(true);
-  const [applyExtraToBalanced, setApplyExtraToBalanced] = useState(false);
+  const [applyExtraToBalanced, setApplyExtraToBalanced] = useState(true);
 
   // UI状態
   const [isExpanded, setIsExpanded] = useState(true);
@@ -157,9 +157,9 @@ export function TrainDataAugmenter({
         // 追加拡張の対象ファイル数を計算
         // バランス調整が有効な場合、全クラス同数（targetCount）を基準に追加拡張
         // これにより、追加拡張後もクラス分布が均一に保たれる
-        const baseFilesToAugment = enableBalancing
-          ? targetCount  // バランス調整後は全クラス同数（均一な拡張）
-          : currentCount;  // バランス無効時は元のまま
+        const baseFilesToAugment = applyExtraToBalanced
+          ? (enableBalancing ? targetCount : currentCount)
+          : currentCount;
 
         // 各拡張タイプのバリエーション数を合計
         let variationsPerFile = 0;
