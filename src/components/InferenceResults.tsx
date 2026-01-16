@@ -11,7 +11,7 @@ interface ClassMetric {
 }
 
 interface EvaluationMetrics {
-  accuracy: number;
+  accuracy?: number;  // オプショナルに変更（回帰モデルでは許容範囲内精度として使用）
   precision?: number;
   recall?: number;
   f1_score?: number;
@@ -69,8 +69,8 @@ export function InferenceResults({ metrics, predictions, classNames }: Inference
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
             icon={<Target className="w-5 h-5" />}
-            label={`許容範囲内 (±${metrics.tolerance})`}
-            value={`${(metrics.accuracy * 100).toFixed(2)}%`}
+            label={`許容範囲内 (±${metrics.tolerance ?? 0})`}
+            value={`${((metrics.accuracy ?? 0) * 100).toFixed(2)}%`}
             color="violet"
           />
           <MetricCard
@@ -98,7 +98,7 @@ export function InferenceResults({ metrics, predictions, classNames }: Inference
           <MetricCard
             icon={<Target className="w-5 h-5" />}
             label={metrics.tolerance && metrics.tolerance > 0 ? `精度 (許容範囲±${metrics.tolerance})` : "精度 (Accuracy)"}
-            value={`${((metrics.accuracy_with_tolerance || metrics.accuracy) * 100).toFixed(2)}%`}
+            value={`${((metrics.accuracy_with_tolerance ?? metrics.accuracy ?? 0) * 100).toFixed(2)}%`}
             color="violet"
           />
           <MetricCard

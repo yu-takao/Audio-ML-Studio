@@ -35,6 +35,8 @@ interface ModelMetadata {
   classes: string[];
   input_shape: number[];
   target_field: string;
+  problem_type?: 'classification' | 'regression';
+  tolerance?: number;
   // 後方互換のため optional（新しい学習スクリプトのみ付与）
   dataset?: {
     split_mode?: 'presplit' | 'random' | string;
@@ -59,17 +61,25 @@ interface ModelMetadata {
   };
   metrics: {
     test_loss: number;
-    test_accuracy: number;
+    test_accuracy?: number;
+    test_mae?: number;
     final_train_loss: number;
-    final_train_accuracy: number;
+    final_train_accuracy?: number;
+    final_train_mae?: number;
     final_val_loss: number;
-    final_val_accuracy: number;
+    final_val_accuracy?: number;
+    final_val_mae?: number;
+    tolerance_accuracy?: number;
+    [key: string]: number | undefined;
   };
   history: {
     loss: number[];
-    accuracy: number[];
+    accuracy?: number[];
+    mae?: number[];
     val_loss: number[];
-    val_accuracy: number[];
+    val_accuracy?: number[];
+    val_mae?: number[];
+    [key: string]: number[] | undefined;
   };
 }
 
@@ -118,7 +128,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(-1);
   const [imageGallery, setImageGallery] = useState<Array<{ url: string; title: string }>>([]);
-  
+
   // Lambda URL for analysis
   const startAnalysisUrl = (outputs as { custom?: { startAnalysisUrl?: string } }).custom?.startAnalysisUrl;
 
@@ -155,7 +165,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
 
       // 日付順でソート（新しいものが上）
       modelList.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-      
+
       setModels(modelList);
     } catch (err) {
       console.error('Failed to load models:', err);
@@ -172,7 +182,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
   const loadModelMetadata = useCallback(async (model: SavedModel) => {
 
     // ローディング状態を設定
-    setModels(prev => prev.map(m => 
+    setModels(prev => prev.map(m =>
       m.path === model.path ? { ...m, isLoadingMetadata: true } : m
     ));
 
@@ -208,14 +218,14 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
       const metadata: ModelMetadata = JSON.parse(text);
 
       const updatedModel = { ...model, metadata, isLoadingMetadata: false };
-      
-      setModels(prev => prev.map(m => 
+
+      setModels(prev => prev.map(m =>
         m.path === model.path ? updatedModel : m
       ));
       setSelectedModel(updatedModel);
     } catch (err) {
       console.error('Failed to load model metadata:', err);
-      setModels(prev => prev.map(m => 
+      setModels(prev => prev.map(m =>
         m.path === model.path ? { ...m, isLoadingMetadata: false } : m
       ));
     }
@@ -277,11 +287,11 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
     // モデルパスからanalysisディレクトリを検索
     // models/{userId}/{jobName}/analysis/{timestamp}/analysis_summary.json
     const baseAnalysisPath = model.path.replace(/\/output$/, '') + '/analysis';
-    
-    setModels(prev => prev.map(m => 
+
+    setModels(prev => prev.map(m =>
       m.path === model.path ? { ...m, analysisStatus: 'loading' } : m
     ));
-    
+
     try {
       // analysis ディレクトリ配下のファイルを一覧
       const result = await list({
@@ -290,19 +300,19 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
       });
 
       // analysis_summary.json を探す
-      const summaryFiles = result.items.filter(item => 
+      const summaryFiles = result.items.filter(item =>
         item.path.endsWith('analysis_summary.json')
       );
 
       if (summaryFiles.length === 0) {
-        setModels(prev => prev.map(m => 
+        setModels(prev => prev.map(m =>
           m.path === model.path ? { ...m, analysisStatus: 'not_found' } : m
         ));
         return;
       }
 
       // 最新の解析結果を取得（最も新しい lastModified）
-      const latestSummary = summaryFiles.sort((a, b) => 
+      const latestSummary = summaryFiles.sort((a, b) =>
         (b.lastModified?.getTime() || 0) - (a.lastModified?.getTime() || 0)
       )[0];
 
@@ -322,7 +332,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
         analysisPath: analysisDir,
       };
 
-      setModels(prev => prev.map(m => 
+      setModels(prev => prev.map(m =>
         m.path === model.path ? updatedModel : m
       ));
       if (selectedModel?.path === model.path) {
@@ -330,7 +340,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
       }
     } catch (err) {
       console.error('Failed to load analysis results:', err);
-      setModels(prev => prev.map(m => 
+      setModels(prev => prev.map(m =>
         m.path === model.path ? { ...m, analysisStatus: 'not_found' } : m
       ));
     }
@@ -492,14 +502,20 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                     {model.isLoadingMetadata && (
                       <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
                     )}
-                    {model.metadata && (
-                      <div className="text-right">
-                        <span className="text-lg font-bold text-emerald-400">
-                          {formatAccuracy(model.metadata.metrics.test_accuracy)}
-                        </span>
-                        <p className="text-xs text-zinc-500">テスト精度</p>
-                      </div>
-                    )}
+                    {model.metadata && (() => {
+                      const isRegression = model.metadata.problem_type === 'regression' || model.metadata.metrics.test_mae !== undefined;
+                      return (
+                        <div className="text-right">
+                          <span className="text-lg font-bold text-emerald-400">
+                            {isRegression
+                              ? (model.metadata.metrics.test_mae ?? 0).toFixed(4)
+                              : formatAccuracy(model.metadata.metrics.test_accuracy ?? 0)
+                            }
+                          </span>
+                          <p className="text-xs text-zinc-500">{isRegression ? 'テストMAE' : 'テスト精度'}</p>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </button>
               ))}
@@ -531,44 +547,99 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                     <Award className="w-4 h-4" />
                     評価結果
                   </h5>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-                      <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                        <Target className="w-4 h-4" />
-                        <span className="text-xs font-medium">テスト精度</span>
+                  {(() => {
+                    const isRegression = selectedModel.metadata.problem_type === 'regression' || selectedModel.metadata.metrics.test_mae !== undefined;
+                    return isRegression ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+                          <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                            <Target className="w-4 h-4" />
+                            <span className="text-xs font-medium">テストMAE</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {(selectedModel.metadata.metrics.test_mae ?? 0).toFixed(4)}
+                          </span>
+                        </div>
+                        {selectedModel.metadata.metrics.tolerance_accuracy !== undefined && (
+                          <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+                            <div className="flex items-center gap-2 text-cyan-400 mb-1">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span className="text-xs font-medium">許容誤差内 (±{selectedModel.metadata.tolerance ?? 0})</span>
+                            </div>
+                            <span className="text-2xl font-bold text-white">
+                              {((selectedModel.metadata.metrics.tolerance_accuracy ?? 0) * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        )}
+                        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                          <div className="flex items-center gap-2 text-blue-400 mb-1">
+                            <TrendingUp className="w-4 h-4" />
+                            <span className="text-xs font-medium">検証MAE</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {(selectedModel.metadata.metrics.final_val_mae ?? 0).toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
+                          <div className="flex items-center gap-2 text-violet-400 mb-1">
+                            <BarChart3 className="w-4 h-4" />
+                            <span className="text-xs font-medium">訓練MAE</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {(selectedModel.metadata.metrics.final_train_mae ?? 0).toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                          <div className="flex items-center gap-2 text-amber-400 mb-1">
+                            <Layers className="w-4 h-4" />
+                            <span className="text-xs font-medium">テスト損失</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {selectedModel.metadata.metrics.test_loss.toFixed(4)}
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-2xl font-bold text-white">
-                        {formatAccuracy(selectedModel.metadata.metrics.test_accuracy)}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
-                      <div className="flex items-center gap-2 text-blue-400 mb-1">
-                        <TrendingUp className="w-4 h-4" />
-                        <span className="text-xs font-medium">検証精度</span>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+                          <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                            <Target className="w-4 h-4" />
+                            <span className="text-xs font-medium">テスト精度</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {formatAccuracy(selectedModel.metadata.metrics.test_accuracy ?? 0)}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
+                          <div className="flex items-center gap-2 text-blue-400 mb-1">
+                            <TrendingUp className="w-4 h-4" />
+                            <span className="text-xs font-medium">検証精度</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {formatAccuracy(selectedModel.metadata.metrics.final_val_accuracy ?? 0)}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
+                          <div className="flex items-center gap-2 text-violet-400 mb-1">
+                            <BarChart3 className="w-4 h-4" />
+                            <span className="text-xs font-medium">訓練精度</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {formatAccuracy(selectedModel.metadata.metrics.final_train_accuracy ?? 0)}
+                          </span>
+                        </div>
+                        <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                          <div className="flex items-center gap-2 text-amber-400 mb-1">
+                            <Layers className="w-4 h-4" />
+                            <span className="text-xs font-medium">テスト損失</span>
+                          </div>
+                          <span className="text-2xl font-bold text-white">
+                            {selectedModel.metadata.metrics.test_loss.toFixed(4)}
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-2xl font-bold text-white">
-                        {formatAccuracy(selectedModel.metadata.metrics.final_val_accuracy)}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-lg bg-violet-500/10 border border-violet-500/30">
-                      <div className="flex items-center gap-2 text-violet-400 mb-1">
-                        <BarChart3 className="w-4 h-4" />
-                        <span className="text-xs font-medium">訓練精度</span>
-                      </div>
-                      <span className="text-2xl font-bold text-white">
-                        {formatAccuracy(selectedModel.metadata.metrics.final_train_accuracy)}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                      <div className="flex items-center gap-2 text-amber-400 mb-1">
-                        <Layers className="w-4 h-4" />
-                        <span className="text-xs font-medium">テスト損失</span>
-                      </div>
-                      <span className="text-2xl font-bold text-white">
-                        {selectedModel.metadata.metrics.test_loss.toFixed(4)}
-                      </span>
-                    </div>
-                  </div>
+                    );
+                  })()}
                 </div>
 
                 {/* クラス情報 */}
@@ -628,45 +699,45 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                       const hasCounts = !!counts && Object.keys(counts).length > 0;
                       return (
                         <>
-                    <div className="flex justify-between p-2 rounded bg-zinc-800/50 text-sm">
-                      <span className="text-zinc-500">分割方式</span>
-                      <span className="text-white">{formatSplitMode(selectedModel.metadata.dataset?.split_mode)}</span>
-                    </div>
+                          <div className="flex justify-between p-2 rounded bg-zinc-800/50 text-sm">
+                            <span className="text-zinc-500">分割方式</span>
+                            <span className="text-white">{formatSplitMode(selectedModel.metadata.dataset?.split_mode)}</span>
+                          </div>
 
-                    {hasCounts ? (
-                      <div className="grid grid-cols-4 gap-2 text-sm">
-                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                          <div className="text-xs text-zinc-500">train</div>
-                          <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset?.counts?.train ?? '—'}
-                          </div>
-                        </div>
-                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                          <div className="text-xs text-zinc-500">validation</div>
-                          <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset?.counts?.validation ?? '—'}
-                          </div>
-                        </div>
-                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                          <div className="text-xs text-zinc-500">test</div>
-                          <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset?.counts?.test ?? '—'}
-                          </div>
-                        </div>
-                        <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-                          <div className="text-xs text-zinc-500">total</div>
-                          <div className="text-lg font-bold text-white">
-                            {selectedModel.metadata.dataset?.counts?.total ?? '—'}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="text-sm text-zinc-500">
-                          このモデルは旧形式のため、データ内訳がメタデータに保存されていません。
-                        </div>
-                      </div>
-                    )}
+                          {hasCounts ? (
+                            <div className="grid grid-cols-4 gap-2 text-sm">
+                              <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                                <div className="text-xs text-zinc-500">train</div>
+                                <div className="text-lg font-bold text-white">
+                                  {selectedModel.metadata.dataset?.counts?.train ?? '—'}
+                                </div>
+                              </div>
+                              <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                                <div className="text-xs text-zinc-500">validation</div>
+                                <div className="text-lg font-bold text-white">
+                                  {selectedModel.metadata.dataset?.counts?.validation ?? '—'}
+                                </div>
+                              </div>
+                              <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                                <div className="text-xs text-zinc-500">test</div>
+                                <div className="text-lg font-bold text-white">
+                                  {selectedModel.metadata.dataset?.counts?.test ?? '—'}
+                                </div>
+                              </div>
+                              <div className="p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
+                                <div className="text-xs text-zinc-500">total</div>
+                                <div className="text-lg font-bold text-white">
+                                  {selectedModel.metadata.dataset?.counts?.total ?? '—'}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="text-sm text-zinc-500">
+                                このモデルは旧形式のため、データ内訳がメタデータに保存されていません。
+                              </div>
+                            </div>
+                          )}
                         </>
                       );
                     })()}
@@ -687,7 +758,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                       <ChevronDown className="w-4 h-4 text-zinc-400" />
                     )}
                   </button>
-                  
+
                   {showHistory && selectedModel.metadata.history && (
                     <div className="mt-4 space-y-4">
                       {/* 精度グラフ */}
@@ -821,8 +892,8 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                     loadAnalysisImage(imgPath);
                                   }
                                   return analysisImages[imgPath] ? (
-                                    <img 
-                                      src={analysisImages[imgPath]} 
+                                    <img
+                                      src={analysisImages[imgPath]}
                                       alt="Frequency Importance"
                                       className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                                       onClick={() => {
@@ -862,7 +933,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                 }
                                 return (
                                   <div key={imgFile} className="space-y-1">
-                                    <div 
+                                    <div
                                       className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
                                       onClick={() => {
                                         if (!analysisImages[imgPath]) return;
@@ -911,7 +982,7 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                 }
                                 return (
                                   <div key={imgFile} className="space-y-1">
-                                    <div 
+                                    <div
                                       className="aspect-video bg-zinc-800 rounded overflow-hidden cursor-pointer hover:ring-2 ring-violet-500 transition-all"
                                       onClick={() => {
                                         if (!analysisImages[imgPath]) return;
@@ -960,8 +1031,8 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                     loadAnalysisImage(imgPath);
                                   }
                                   return (
-                                    <div 
-                                      key={idx} 
+                                    <div
+                                      key={idx}
                                       className="flex items-center gap-3 p-2 rounded bg-zinc-800/50 hover:bg-zinc-800 cursor-pointer transition-colors"
                                       onClick={() => {
                                         if (!analysisImages[imgPath]) return;
@@ -969,9 +1040,9 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                                         const gallery = selectedModel.analysisSummary!.sample_results
                                           .map((s) => {
                                             const path = `${selectedModel.analysisPath}/${s.image}`;
-                                            return analysisImages[path] ? { 
-                                              url: analysisImages[path], 
-                                              title: `${s.filename} - 予測: ${s.pred_class} (${(s.confidence * 100).toFixed(1)}%)` 
+                                            return analysisImages[path] ? {
+                                              url: analysisImages[path],
+                                              title: `${s.filename} - 予測: ${s.pred_class} (${(s.confidence * 100).toFixed(1)}%)`
                                             } : null;
                                           })
                                           .filter((item): item is { url: string; title: string } => item !== null);
@@ -1038,20 +1109,20 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
 
       {/* 画像拡大モーダル */}
       {selectedImageIndex >= 0 && imageGallery.length > 0 && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
           onClick={() => setSelectedImageIndex(-1)}
         >
           <div className="relative max-w-6xl max-h-[90vh] w-full flex items-center justify-center">
             {/* 画像 */}
             <div className="relative">
-              <img 
-                src={imageGallery[selectedImageIndex].url} 
-                alt={imageGallery[selectedImageIndex].title} 
+              <img
+                src={imageGallery[selectedImageIndex].url}
+                alt={imageGallery[selectedImageIndex].title}
                 className="max-w-full max-h-[80vh] object-contain rounded-lg"
                 onClick={(e) => e.stopPropagation()}
               />
-              
+
               {/* タイトル */}
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 rounded-b-lg">
                 <p className="text-white text-sm font-medium text-center">

@@ -155,9 +155,11 @@ export function TrainDataAugmenter({
       let extraCount = 0;
       if (enableExtraAugmentation) {
         // 追加拡張の対象ファイル数を計算
-        const baseFilesToAugment = applyExtraToBalanced
-          ? currentCount + balanceNeeded  // バランス後の全ファイル
-          : currentCount;                  // 元のファイルのみ
+        // バランス調整が有効な場合、全クラス同数（targetCount）を基準に追加拡張
+        // これにより、追加拡張後もクラス分布が均一に保たれる
+        const baseFilesToAugment = enableBalancing
+          ? targetCount  // バランス調整後は全クラス同数（均一な拡張）
+          : currentCount;  // バランス無効時は元のまま
 
         // 各拡張タイプのバリエーション数を合計
         let variationsPerFile = 0;
@@ -510,8 +512,8 @@ export function TrainDataAugmenter({
                       key={option.mode}
                       onClick={() => setBalanceMode(option.mode)}
                       className={`p-2 rounded-lg border transition-all text-center ${balanceMode === option.mode
-                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
-                          : 'border-zinc-700 hover:border-zinc-600 text-zinc-400'
+                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
+                        : 'border-zinc-700 hover:border-zinc-600 text-zinc-400'
                         }`}
                     >
                       <div className="text-xs">{option.label}</div>
@@ -650,8 +652,8 @@ export function TrainDataAugmenter({
                   className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all"
                   style={{
                     width: `${progress.totalClasses > 0
-                        ? (progress.processedClasses / progress.totalClasses) * 100
-                        : 0
+                      ? (progress.processedClasses / progress.totalClasses) * 100
+                      : 0
                       }%`,
                   }}
                 />
@@ -676,8 +678,8 @@ export function TrainDataAugmenter({
               onClick={executeAugmentation}
               disabled={progress.isProcessing || trainFiles.length === 0}
               className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${progress.isProcessing || trainFiles.length === 0
-                  ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white shadow-lg'
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white shadow-lg'
                 }`}
             >
               {progress.isProcessing ? (

@@ -45,10 +45,10 @@ export function SmartRecommendation({
 
     const { totalSamples, numClasses, minSamplesPerClass, imbalanceRatio } = stats;
 
-    // エポック数の推奨
+    // エポック数の推奨（大規模データセット対応）
     let epochsValue: number;
     let epochsReason: string;
-    
+
     if (totalSamples < 500) {
       epochsValue = 30;
       epochsReason = 'データ数が少ない（<500）ため、過学習を防ぐために少なめに設定';
@@ -58,39 +58,54 @@ export function SmartRecommendation({
     } else if (totalSamples < 5000) {
       epochsValue = 80;
       epochsReason = 'データ数が多め（1000-5000）のため、十分な学習が可能';
-    } else {
+    } else if (totalSamples < 10000) {
       epochsValue = 100;
-      epochsReason = 'データ数が十分（>5000）のため、より多くの学習が可能';
+      epochsReason = 'データ数が十分（5000-10000）のため、より多くの学習が可能';
+    } else if (totalSamples < 30000) {
+      epochsValue = 80;
+      epochsReason = '大規模データ（10000-30000）は各エポックで十分な学習が行われるため控えめに';
+    } else {
+      epochsValue = 60;
+      epochsReason = '超大規模データ（30000+）は1エポックで多くの更新が行われるため少なめに';
     }
 
-    // バッチサイズの推奨
+    // バッチサイズの推奨（大規模データセット対応）
     let batchSizeValue: number;
     let batchSizeReason: string;
-    
+
     if (totalSamples < 500) {
       batchSizeValue = 16;
       batchSizeReason = 'データ数が少ないため、細かく更新して学習効率を上げる';
     } else if (totalSamples < 2000) {
       batchSizeValue = 32;
       batchSizeReason = '標準的なデータ量に適した値';
-    } else {
+    } else if (totalSamples < 10000) {
       batchSizeValue = 64;
       batchSizeReason = 'データ数が多いため、大きめのバッチで安定した学習が可能';
-    }
-    
-    // クラス不均衡がある場合はバッチサイズを小さめに
-    if (imbalanceRatio > 3) {
-      batchSizeValue = Math.max(16, batchSizeValue - 16);
-      batchSizeReason += '（クラス不均衡があるため調整）';
+    } else if (totalSamples < 30000) {
+      batchSizeValue = 128;
+      batchSizeReason = '大規模データ（10000-30000）に適した効率的なバッチサイズ';
+    } else {
+      batchSizeValue = 256;
+      batchSizeReason = '超大規模データ（30000+）向けの最大バッチサイズ';
     }
 
-    // 学習率の推奨
+    // クラス不均衡がある場合はバッチサイズを小さめに
+    if (imbalanceRatio > 3) {
+      batchSizeValue = Math.max(16, Math.floor(batchSizeValue / 2));
+      batchSizeReason += '（クラス不均衡があるため半分に調整）';
+    }
+
+    // 学習率の推奨（バッチサイズに応じて調整）
     let learningRateValue: number;
     let learningRateReason: string;
-    
-    if (numClasses <= 3) {
+
+    if (batchSizeValue >= 256) {
+      learningRateValue = 0.002;
+      learningRateReason = '大きなバッチサイズに合わせた高めの学習率';
+    } else if (batchSizeValue >= 128) {
       learningRateValue = 0.001;
-      learningRateReason = 'クラス数が少ない（≤3）シンプルなタスクのため標準値';
+      learningRateReason = '中〜大規模バッチに適した学習率';
     } else if (numClasses <= 10) {
       learningRateValue = 0.001;
       learningRateReason = '中程度のクラス数に適した標準値';
@@ -99,34 +114,40 @@ export function SmartRecommendation({
       learningRateReason = 'クラス数が多い（>10）複雑なタスクのため慎重に学習';
     }
 
-    // 検証データ割合の推奨
+    // 検証データ割合の推奨（大規模データ対応）
     let validationSplitValue: number;
     let validationSplitReason: string;
-    
+
     if (totalSamples < 500) {
       validationSplitValue = 0.15;
       validationSplitReason = 'データ数が少ないため、訓練データを確保しつつ過学習監視';
-    } else if (minSamplesPerClass < 50) {
+    } else if (totalSamples < 5000) {
       validationSplitValue = 0.15;
-      validationSplitReason = '少数クラスのサンプルが少ないため控えめに';
+      validationSplitReason = '標準的なデータ量に適した割合';
+    } else if (totalSamples < 20000) {
+      validationSplitValue = 0.1;
+      validationSplitReason = '大規模データは10%でも十分な検証が可能';
     } else {
-      validationSplitValue = 0.2;
-      validationSplitReason = 'データ数が十分なため標準的な割合';
+      validationSplitValue = 0.05;
+      validationSplitReason = '超大規模データは5%でも数千件の検証データが確保可能';
     }
 
-    // テストデータ割合の推奨
+    // テストデータ割合の推奨（大規模データ対応）
     let testSplitValue: number;
     let testSplitReason: string;
-    
+
     if (totalSamples < 500) {
       testSplitValue = 0.1;
       testSplitReason = 'データ数が少ないため、訓練データを確保しつつ評価';
-    } else if (minSamplesPerClass < 30) {
-      testSplitValue = 0.1;
-      testSplitReason = '少数クラスの評価サンプルを確保するため控えめに';
-    } else {
+    } else if (totalSamples < 5000) {
       testSplitValue = 0.15;
       testSplitReason = 'データ数が十分なため信頼性の高い評価が可能';
+    } else if (totalSamples < 20000) {
+      testSplitValue = 0.1;
+      testSplitReason = '大規模データは10%でも十分な評価が可能';
+    } else {
+      testSplitValue = 0.05;
+      testSplitReason = '超大規模データは5%でも数千件のテストデータが確保可能';
     }
 
     return {
@@ -143,7 +164,7 @@ export function SmartRecommendation({
   }
 
   // 現在の設定と推奨値の差異をチェック
-  const hasDifferences = 
+  const hasDifferences =
     currentParams.epochs !== recommendations.epochs.value ||
     currentParams.batchSize !== recommendations.batchSize.value ||
     Math.abs(currentParams.learningRate - recommendations.learningRate.value) > 0.0001 ||
@@ -191,7 +212,7 @@ export function SmartRecommendation({
           const currentVal = typeof item.current === 'number' ? item.current : item.current;
           const recVal = typeof item.rec.value === 'number' ? item.rec.value : item.rec.value;
           const isMatch = currentVal.toString() === recVal.toString();
-          
+
           return (
             <div key={item.key} className="flex items-center gap-3 p-2 bg-zinc-900/30 rounded-lg">
               {isMatch ? (

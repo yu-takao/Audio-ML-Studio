@@ -366,6 +366,26 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
     setError(null);
 
     try {
+      // 実際のWAVファイル数をカウント（拡張後の正確な数を取得）
+      let actualFileCount = dataset.fileCount;
+      let actualSamplesPerClass: Map<string, number> | null = null;
+
+      try {
+        const filesResult = await list({
+          path: dataset.path + '/',
+          options: { listAll: true },
+        });
+
+        const wavFiles = filesResult.items.filter(item =>
+          item.path.toLowerCase().endsWith('.wav')
+        );
+        actualFileCount = wavFiles.length;
+
+        console.log(`Actual WAV file count: ${actualFileCount} (index: ${dataset.fileCount})`);
+      } catch (listErr) {
+        console.warn('Failed to count actual files, using index value:', listErr);
+      }
+
       // メタデータファイルを読み込む
       const metadataPath = `${dataset.path}/metadata.json`;
       const downloadResult = await downloadData({
@@ -384,14 +404,34 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
         samplesPerClass = new Map(Object.entries(savedMetadata.datasetInfo.samplesPerClass as unknown as Record<string, number>));
       }
 
-      // 状態を復元
+      // ファイル数が変わった場合、クラス分布も比例して調整
+      const metadataTotal = savedMetadata.datasetInfo.totalFiles;
+      if (actualFileCount > metadataTotal && metadataTotal > 0) {
+        const ratio = actualFileCount / metadataTotal;
+        actualSamplesPerClass = new Map<string, number>();
+        for (const [className, count] of samplesPerClass) {
+          actualSamplesPerClass.set(className, Math.round(count * ratio));
+        }
+        console.log(`Adjusted class distribution by ratio ${ratio.toFixed(2)}`);
+      }
+
+      // 状態を復元（実際のファイル数を使用）
       setMetadata(savedMetadata.metadata);
       setTargetConfig(savedMetadata.targetConfig);
       setAuxiliaryFields(savedMetadata.auxiliaryFields);
       setDatasetInfo({
         ...savedMetadata.datasetInfo,
-        samplesPerClass,
+        totalFiles: actualFileCount,
+        samplesPerClass: actualSamplesPerClass || samplesPerClass,
       });
+
+      // selectedS3Datasetも更新
+      if (actualFileCount !== dataset.fileCount) {
+        setSelectedS3Dataset({
+          ...dataset,
+          fileCount: actualFileCount,
+        });
+      }
 
       console.log('S3 metadata loaded:', savedMetadata);
     } catch (err) {
@@ -613,57 +653,6 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
     });
   }, [metadata, targetConfig, fileInfoList, dataSource]);
 
-  /**
-   * データセット統計を計算
-   * データ拡張後の場合は、拡張後のファイル数を使用
-   */
-  const datasetStats = useMemo<DatasetStats | null>(() => {
-    if (!datasetInfo) return null;
-
-    // samplesPerClassからカウントを取得（MapまたはObjectに対応）
-    let counts: number[];
-    if (datasetInfo.samplesPerClass instanceof Map) {
-      if (datasetInfo.samplesPerClass.size === 0) return null;
-      counts = Array.from(datasetInfo.samplesPerClass.values());
-    } else {
-      // オブジェクトの場合
-      const values = Object.values(datasetInfo.samplesPerClass as unknown as Record<string, number>);
-      if (values.length === 0) return null;
-      counts = values;
-    }
-
-    const minSamples = Math.min(...counts);
-    const maxSamples = Math.max(...counts);
-
-    // データ拡張後のファイル数を計算
-    // augmentedTrainFiles が存在する場合、元の train + validation + test のうち
-    // train 部分が拡張されているので、その差分を totalFiles に加算
-    let effectiveTotalFiles = datasetInfo.totalFiles;
-    if (augmentedTrainFiles && dataSplit) {
-      const originalTrainCount = dataSplit.train.length;
-      const augmentedTrainCount = augmentedTrainFiles.length;
-      const augmentationIncrease = augmentedTrainCount - originalTrainCount;
-      effectiveTotalFiles = datasetInfo.totalFiles + augmentationIncrease;
-    }
-
-    return {
-      totalSamples: effectiveTotalFiles, // 拡張後のファイル数を使用
-      numClasses: datasetInfo.classes.length,
-      minSamplesPerClass: minSamples,
-      maxSamplesPerClass: maxSamples,
-      imbalanceRatio: minSamples > 0 ? maxSamples / minSamples : Infinity,
-    };
-  }, [datasetInfo, augmentedTrainFiles, dataSplit]);
-
-  /**
-   * データセット統計が変更されたら推奨パラメータを自動適用
-   */
-  useEffect(() => {
-    if (datasetStats) {
-      const recommended = calculateRecommendedParams(datasetStats);
-      setConfig(recommended);
-    }
-  }, [datasetStats]);
 
   /**
    * S3データセット用の統計情報
@@ -679,19 +668,6 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
       imbalanceRatio: 1,
     };
   }, [selectedS3Dataset]);
-
-  /**
-   * S3データセットが選択されたら、ファイル数に基づいて推奨パラメータを適用
-   */
-  useEffect(() => {
-    if (s3DatasetStats) {
-      const recommended = calculateRecommendedParams(s3DatasetStats);
-      setConfig(recommended);
-    }
-  }, [s3DatasetStats]);
-
-  // 有効な統計情報（ローカルまたはS3）
-  const effectiveStats = datasetStats || s3DatasetStats;
 
   /**
    * フィールドラベルを変更
@@ -744,6 +720,82 @@ export function ModelTraining({ userId }: ModelTrainingProps) {
       metadata.separator
     );
   }, [targetConfig, metadata]);
+
+  /**
+   * データセット統計を計算
+   * データ拡張後の場合は、拡張後のファイル数を使用
+   */
+  const datasetStats = useMemo<DatasetStats | null>(() => {
+    if (!datasetInfo) return null;
+
+    // クラス分布: 拡張後がある場合はそれを使用、なければ元のまま
+    let counts: number[];
+    if (augmentedTrainFiles && augmentedTrainFiles.length > 0 && getLabelForFile) {
+      // 拡張後のクラス分布を計算
+      const dist = new Map<string, number>();
+      for (const file of augmentedTrainFiles) {
+        const label = getLabelForFile(file);
+        dist.set(label, (dist.get(label) || 0) + 1);
+      }
+      counts = Array.from(dist.values());
+    } else {
+      // samplesPerClassからカウントを取得（MapまたはObjectに対応）
+      if (datasetInfo.samplesPerClass instanceof Map) {
+        if (datasetInfo.samplesPerClass.size === 0) return null;
+        counts = Array.from(datasetInfo.samplesPerClass.values());
+      } else {
+        // オブジェクトの場合
+        const values = Object.values(datasetInfo.samplesPerClass as unknown as Record<string, number>);
+        if (values.length === 0) return null;
+        counts = values;
+      }
+    }
+
+    const minSamples = Math.min(...counts);
+    const maxSamples = Math.max(...counts);
+
+    // データ拡張後のファイル数を計算
+    // augmentedTrainFiles が存在する場合、元の train + validation + test のうち
+    // train 部分が拡張されているので、その差分を totalFiles に加算
+    let effectiveTotalFiles = datasetInfo.totalFiles;
+    if (augmentedTrainFiles && dataSplit) {
+      const originalTrainCount = dataSplit.train.length;
+      const augmentedTrainCount = augmentedTrainFiles.length;
+      const augmentationIncrease = augmentedTrainCount - originalTrainCount;
+      effectiveTotalFiles = datasetInfo.totalFiles + augmentationIncrease;
+    }
+
+    return {
+      totalSamples: effectiveTotalFiles, // 拡張後のファイル数を使用
+      numClasses: datasetInfo.classes.length,
+      minSamplesPerClass: minSamples,
+      maxSamplesPerClass: maxSamples,
+      imbalanceRatio: minSamples > 0 ? maxSamples / minSamples : Infinity,
+    };
+  }, [datasetInfo, augmentedTrainFiles, dataSplit, getLabelForFile]);
+
+  /**
+   * データセット統計が変更されたら推奨パラメータを自動適用
+   */
+  useEffect(() => {
+    if (datasetStats) {
+      const recommended = calculateRecommendedParams(datasetStats);
+      setConfig(recommended);
+    }
+  }, [datasetStats]);
+
+  /**
+   * S3データセットが選択されたら、ファイル数に基づいて推奨パラメータを適用
+   */
+  useEffect(() => {
+    if (s3DatasetStats) {
+      const recommended = calculateRecommendedParams(s3DatasetStats);
+      setConfig(recommended);
+    }
+  }, [s3DatasetStats]);
+
+  // 有効な統計情報（ローカルまたはS3）
+  const effectiveStats = datasetStats || s3DatasetStats;
 
   // データ分割を実行
   const executeDataSplit = useCallback(() => {

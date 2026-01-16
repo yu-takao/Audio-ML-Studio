@@ -370,6 +370,7 @@ def main():
             with open(label_encoder_path, 'r') as f:
                 label_encoder = json.load(f)
                 # 訓練時のクラス名で上書き（重要：これにより正しいクラス数とクラス名を使用）
+                global CLASS_NAMES
                 CLASS_NAMES = label_encoder.get('classes', CLASS_NAMES)
                 problem_type = label_encoder.get('problem_type', 'classification')
                 tolerance = float(label_encoder.get('tolerance', 0.0))

@@ -537,8 +537,8 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
                       {model.problemType && (
                         <div className="mt-2">
                           <span className={`text-xs px-2 py-1 rounded ${model.problemType === 'regression'
-                              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                              : 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
+                            ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                            : 'bg-violet-500/20 text-violet-400 border border-violet-500/30'
                             }`}>
                             {model.problemType === 'regression' ? '回帰問題' : '分類問題'}
                           </span>
@@ -557,6 +557,15 @@ export function ModelEvaluation({ userId }: ModelEvaluationProps) {
                       {model.metrics && (() => {
                         // 回帰モデル判定: problem_typeまたはtest_maeの存在で判定
                         const isRegression = model.problemType === 'regression' || model.metrics['test_mae'] !== undefined;
+
+                        // デバッグ用ログ
+                        console.log('Model:', model.name);
+                        console.log('Problem Type:', model.problemType);
+                        console.log('Metrics:', model.metrics);
+                        console.log('test_mae:', model.metrics['test_mae']);
+                        console.log('test_accuracy:', model.metrics.test_accuracy);
+                        console.log('isRegression:', isRegression);
+
                         return (
                           <div className="mt-2 text-xs">
                             {isRegression ? (
