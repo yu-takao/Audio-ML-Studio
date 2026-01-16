@@ -55,11 +55,11 @@ function SettingCard({ title, icon, enabled, onToggle, children, color, warning,
             <div className={`w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}></div>
           </label>
         </div>
-        
+
         {disabled && disabledMessage && (
           <p className="text-xs text-amber-400 mb-2">{disabledMessage}</p>
         )}
-        
+
         <div className={`space-y-3 transition-opacity ${enabled && !disabled ? 'opacity-100' : 'opacity-40'}`}>
           {children}
         </div>
@@ -100,9 +100,9 @@ function Slider({ label, value, min, max, step, unit, onChange, disabled }: Slid
   );
 }
 
-export function AugmentationSettingsPanel({ 
-  settings, 
-  onChange, 
+export function AugmentationSettingsPanel({
+  settings,
+  onChange,
   noiseFileCount = 0,
   isNoiseReady = false,
 }: Props) {
@@ -187,7 +187,7 @@ export function AugmentationSettingsPanel({
             label="バリエーション数"
             value={settings.timeShift.variations}
             min={1}
-            max={10}
+            max={50}
             step={1}
             unit="個"
             onChange={(variations) => updateTimeShift({ variations })}
@@ -227,7 +227,7 @@ export function AugmentationSettingsPanel({
             label="バリエーション数"
             value={settings.gainVariation.variations}
             min={1}
-            max={10}
+            max={50}
             step={1}
             unit="個"
             onChange={(variations) => updateGainVariation({ variations })}
@@ -250,7 +250,7 @@ export function AugmentationSettingsPanel({
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span className="text-zinc-300">ESC-50: {noiseFileCount}種類の環境音</span>
           </div>
-          
+
           <Slider
             label="最小SNR"
             value={settings.environmentNoise.minSnrDb}
@@ -275,7 +275,7 @@ export function AugmentationSettingsPanel({
             label="バリエーション数"
             value={settings.environmentNoise.variations}
             min={1}
-            max={10}
+            max={50}
             step={1}
             unit="個"
             onChange={(variations) => updateEnvironmentNoise({ variations })}
@@ -316,7 +316,7 @@ export function AugmentationSettingsPanel({
             label="バリエーション数"
             value={settings.pitchShift.variations}
             min={1}
-            max={5}
+            max={50}
             step={1}
             unit="個"
             onChange={(variations) => updatePitchShift({ variations })}
@@ -357,7 +357,7 @@ export function AugmentationSettingsPanel({
             label="バリエーション数"
             value={settings.timeStretch.variations}
             min={1}
-            max={5}
+            max={50}
             step={1}
             unit="個"
             onChange={(variations) => updateTimeStretch({ variations })}

@@ -69,16 +69,14 @@ export function analyzeFilenames(
     }
   });
 
-  // 同じフィールド数のファイルのみを使用
-  const validParsedFiles = parsedFiles.filter(
-    (parts) => parts.length === mostCommonFieldCount
-  );
+  // 全てのファイルを使用（以前はフィールド数が一致するもののみフィルタリングしていた）
+  const validParsedFiles = parsedFiles;
 
   // 各フィールドの情報を収集
   const fields: MetadataField[] = [];
-  
+
   for (let i = 0; i < mostCommonFieldCount; i++) {
-    const values = validParsedFiles.map((parts) => parts[i]);
+    const values = validParsedFiles.map((parts) => parts[i] || '');
     const uniqueValues = [...new Set(values)].sort();
     const numericValues = values.filter(isNumericValue).map(Number);
     const isNumeric = numericValues.length === values.length;
@@ -139,7 +137,7 @@ export function groupNumericValues(
   ranges: { min: number; max: number; label: string }[]
 ): Map<string, number[]> {
   const groups = new Map<string, number[]>();
-  
+
   ranges.forEach((range) => {
     groups.set(range.label, []);
   });
