@@ -43,7 +43,7 @@ export function SmartRecommendation({
   const recommendations = useMemo<RecommendedParams | null>(() => {
     if (!stats) return null;
 
-    const { totalSamples, numClasses, minSamplesPerClass, imbalanceRatio } = stats;
+    const { totalSamples, numClasses, minSamplesPerClass: _min, imbalanceRatio } = stats;
 
     // エポック数の推奨（大規模データセット対応）
     let epochsValue: number;

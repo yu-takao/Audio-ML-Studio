@@ -762,23 +762,26 @@ export function ModelBrowser({ userId }: ModelBrowserProps) {
                   {showHistory && selectedModel.metadata.history && (
                     <div className="mt-4 space-y-4">
                       {/* 精度グラフ */}
-                      <div className="p-4 rounded-lg bg-zinc-900/50">
-                        <h6 className="text-xs font-medium text-zinc-400 mb-3">精度 (Accuracy)</h6>
-                        <div className="h-32 flex items-end gap-1">
-                          {selectedModel.metadata.history.accuracy.map((acc, idx) => (
-                            <div
-                              key={idx}
-                              className="flex-1 bg-gradient-to-t from-violet-500 to-violet-400 rounded-t opacity-60"
-                              style={{ height: `${acc * 100}%` }}
-                              title={`Epoch ${idx + 1}: ${(acc * 100).toFixed(1)}%`}
-                            />
-                          ))}
+                      {/* 精度グラフ (回帰モデルの場合は表示しないか、accuracyがある場合のみ表示) */}
+                      {selectedModel.metadata.history.accuracy && selectedModel.metadata.history.accuracy.length > 0 && (
+                        <div className="p-4 rounded-lg bg-zinc-900/50">
+                          <h6 className="text-xs font-medium text-zinc-400 mb-3">精度 (Accuracy)</h6>
+                          <div className="h-32 flex items-end gap-1">
+                            {selectedModel.metadata.history.accuracy?.map((acc, idx) => (
+                              <div
+                                key={idx}
+                                className="flex-1 bg-gradient-to-t from-violet-500 to-violet-400 rounded-t opacity-60"
+                                style={{ height: `${acc * 100}%` }}
+                                title={`Epoch ${idx + 1}: ${(acc * 100).toFixed(1)}%`}
+                              />
+                            ))}
+                          </div>
+                          <div className="flex justify-between mt-2 text-xs text-zinc-500">
+                            <span>Epoch 1</span>
+                            <span>Epoch {selectedModel.metadata.history.accuracy?.length}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between mt-2 text-xs text-zinc-500">
-                          <span>Epoch 1</span>
-                          <span>Epoch {selectedModel.metadata.history.accuracy.length}</span>
-                        </div>
-                      </div>
+                      )}
 
                       {/* 損失グラフ */}
                       <div className="p-4 rounded-lg bg-zinc-900/50">
